@@ -1,0 +1,32 @@
+# ── GitHub Data Collection ──────────────────────────────────────────────────
+github:
+  repo: "facebook/react"          # owner/repo to pull PRs from
+  max_prs: 50                     # cap for data collection
+  min_review_comments: 1          # filter: skip PRs with fewer comments
+  state: "closed"                 # "open" | "closed" | "all"
+
+# ── Paths ───────────────────────────────────────────────────────────────────
+paths:
+  raw_data: "data/raw/prs_raw.json"
+  processed_data: "data/processed/prs_processed.json"
+  evaluation_results: "data/processed/evaluation_results.json"
+  chroma_db: "data/chroma_db"
+  knowledge_base: "data/knowledge_base"  # folder for OWASP / coding rule docs
+
+# ── LLM ─────────────────────────────────────────────────────────────────────
+llm:
+  provider: "openai"              # "openai" | "local"
+  model: "gpt-4o-mini"           # cheap & capable for academic project
+  temperature: 0.2
+  max_tokens: 1500
+
+# ── Embeddings ───────────────────────────────────────────────────────────────
+embeddings:
+  model: "all-MiniLM-L6-v2"      # fast sentence-transformer model
+  chunk_size: 500
+  chunk_overlap: 50
+
+# ── RAG ──────────────────────────────────────────────────────────────────────
+rag:
+  top_k: 5                        # number of retrieved chunks per query
+  collection_name: "security_rules"

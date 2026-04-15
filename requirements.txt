@@ -1,0 +1,30 @@
+# GitHub API
+PyGithub==2.3.0
+requests==2.31.0
+
+# LLM / OpenAI
+openai==1.30.1
+
+# RAG stack
+langchain==0.2.1
+langchain-community==0.2.1
+langchain-openai==0.1.8
+chromadb==0.5.0
+sentence-transformers==3.0.0
+
+# Embeddings / ML
+torch==2.3.0
+transformers==4.41.1
+numpy==1.26.4
+scikit-learn==1.5.0
+
+# Evaluation
+rouge-score==0.1.2
+nltk==3.8.1
+
+# Utilities
+pyyaml==6.0.1
+python-dotenv==1.0.1
+tqdm==4.66.4
+tenacity==8.3.0
+pandas==2.2.2
