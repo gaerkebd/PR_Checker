@@ -33,6 +33,7 @@ def get_logger(name: str, level: int = logging.INFO) -> logging.Logger:
 
 def require_env(var: str) -> str:
     """Return env var value or raise a clear error."""
+    print("checking github env. var")
     val = os.environ.get(var)
     if not val:
         raise EnvironmentError(

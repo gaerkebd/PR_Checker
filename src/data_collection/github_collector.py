@@ -66,6 +66,7 @@ def collect_prs(config: dict, github_token: str) -> list[dict]:
     gh_cfg = config["github"]
     repo_name = gh_cfg["repo"]
     max_prs = gh_cfg["max_prs"]
+    print("collecting PRs from " + repo_name)
     min_comments = gh_cfg["min_review_comments"]
     state = gh_cfg.get("state", "closed")
 
@@ -81,9 +82,9 @@ def collect_prs(config: dict, github_token: str) -> list[dict]:
             break
 
         # Check rate limit proactively
-        remaining = g.get_rate_limit().core.remaining
+        remaining, _ = g.rate_limiting
         if remaining < 20:
-            reset_ts = g.get_rate_limit().core.reset.timestamp()
+            reset_ts = g.rate_limiting_resettime  # Unix timestamp
             sleep_s = max(0, reset_ts - time.time()) + 5
             logger.warning(f"Rate limit low ({remaining}). Sleeping {sleep_s:.0f}s …")
             time.sleep(sleep_s)

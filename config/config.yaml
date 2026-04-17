@@ -1,9 +1,15 @@
 # ── GitHub Data Collection ──────────────────────────────────────────────────
 github:
-  repo: "facebook/react"          # owner/repo to pull PRs from
-  max_prs: 50                     # cap for data collection
+  repo: "ViTAE-Transformer/ViTPose"          # owner/repo to pull PRs from
+  max_prs: 200                     # cap for data collection
   min_review_comments: 1          # filter: skip PRs with fewer comments
-  state: "closed"                 # "open" | "closed" | "all"
+  state: "open"                 # "open" | "closed" | "all"
+
+bigvul:
+  api: ""          # owner/repo to pull PRs from
+  max_prs: 200                     # cap for data collection
+  min_review_comments: 1          # filter: skip PRs with fewer comments
+  state: "open"                 # "open" | "closed" | "all"
 
 # ── Paths ───────────────────────────────────────────────────────────────────
 paths:
