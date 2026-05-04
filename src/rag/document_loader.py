@@ -12,7 +12,7 @@ box without requiring external files.
 import os
 from pathlib import Path
 
-from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.documents import Document
 
 from src.utils import get_logger
@@ -132,7 +132,8 @@ def load_documents(knowledge_base_dir: str, chunk_size: int = 500, chunk_overlap
     # User-supplied files
     kb_path = Path(knowledge_base_dir)
     if kb_path.exists():
-        for fpath in kb_path.glob("**/*.{txt,md}"):
+        user_files = list(kb_path.glob("**/*.txt")) + list(kb_path.glob("**/*.md"))
+        for fpath in user_files:
             text = fpath.read_text(encoding="utf-8", errors="ignore")
             docs.append(Document(page_content=text, metadata={"source": str(fpath)}))
             logger.info(f"Loaded external doc: {fpath}")

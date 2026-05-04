@@ -3,10 +3,14 @@ baseline_model.py
 -----------------
 Zero-retrieval LLM reviewer.  Takes a PR diff and returns structured JSON
 containing a summary, detected issues, and improvement suggestions.
+
+Supports two backends, selected automatically from config:
+  - Ollama  (config["ollama"] present and api_key omitted)
+  - OpenAI-compatible endpoint  (Gemini, OpenAI, etc.)
 """
 
 import json
-from typing import Optional
+import requests
 
 from openai import OpenAI
 from tenacity import retry, wait_exponential, stop_after_attempt
@@ -48,28 +52,66 @@ _USER_TEMPLATE = """\
 
 
 class BaselineReviewer:
-    """Wraps an OpenAI-compatible chat endpoint for zero-retrieval PR review."""
+    """Wraps either Ollama (/api/generate) or an OpenAI-compatible endpoint."""
 
-    def __init__(self, config: dict, api_key: str):
+    def __init__(self, config: dict, api_key: str = ""):
         llm_cfg = config["llm"]
-        self.model = llm_cfg["model"]
+        ollama_cfg = config.get("ollama")
+
+        # Use Ollama when the config section exists and no API key is supplied
+        self._use_ollama = bool(ollama_cfg) and not api_key
         self.temperature = llm_cfg.get("temperature", 0.2)
         self.max_tokens = llm_cfg.get("max_tokens", 1500)
-        self.client = OpenAI(api_key=api_key)
 
-    @retry(wait=wait_exponential(multiplier=2, min=4, max=60), stop=stop_after_attempt(4))
-    def review(self, pr_record: dict) -> dict:
-        """
-        Generate a code review for a single preprocessed PR record.
+        if self._use_ollama:
+            self.model = ollama_cfg["model"]
+            self._ollama_url = ollama_cfg["base_url"]
+            self._ollama_stream = ollama_cfg.get("stream", False)
+            logger.info(f"BaselineReviewer using Ollama: {self._ollama_url} model={self.model}")
+        else:
+            self.model = llm_cfg["model"]
+            base_url = llm_cfg.get("base_url")
+            self.client = OpenAI(api_key=api_key, base_url=base_url)
+            logger.info(f"BaselineReviewer using OpenAI-compat endpoint: model={self.model}")
 
-        Parameters
-        ----------
-        pr_record : dict with at least 'title' and 'diff' keys
+    # ── Ollama backend ────────────────────────────────────────────────────────
 
-        Returns
-        -------
-        dict with keys: pr_id, repo, review (the LLM output), model
-        """
+    def _ollama_review(self, pr_record: dict) -> dict:
+        user_msg = _USER_TEMPLATE.format(
+            title=pr_record.get("title", "Untitled"),
+            diff=pr_record.get("diff", ""),
+        )
+        # Combine system + user into a single prompt for /api/generate
+        prompt = f"{_SYSTEM_PROMPT}\n\n{user_msg}"
+
+        payload = {
+            "model": self.model,
+            "prompt": prompt,
+            "stream": self._ollama_stream,
+            "format": "json",
+        }
+
+        resp = requests.post(self._ollama_url, json=payload, timeout=180)
+        resp.raise_for_status()
+        raw = resp.json().get("response", "")
+
+        try:
+            review_json = json.loads(raw)
+        except json.JSONDecodeError:
+            logger.warning(f"PR {pr_record.get('pr_id')}: Ollama returned invalid JSON -- storing raw")
+            review_json = {"raw": raw}
+
+        return {
+            "pr_id": pr_record.get("pr_id"),
+            "repo": pr_record.get("repo"),
+            "model": self.model,
+            "approach": "baseline",
+            "review": review_json,
+        }
+
+    # ── OpenAI-compatible backend ─────────────────────────────────────────────
+
+    def _openai_review(self, pr_record: dict) -> dict:
         user_msg = _USER_TEMPLATE.format(
             title=pr_record.get("title", "Untitled"),
             diff=pr_record.get("diff", ""),
@@ -90,7 +132,7 @@ class BaselineReviewer:
         try:
             review_json = json.loads(raw)
         except json.JSONDecodeError:
-            logger.warning(f"PR {pr_record.get('pr_id')}: LLM returned invalid JSON — storing raw text")
+            logger.warning(f"PR {pr_record.get('pr_id')}: LLM returned invalid JSON -- storing raw text")
             review_json = {"raw": raw}
 
         return {
@@ -100,6 +142,14 @@ class BaselineReviewer:
             "approach": "baseline",
             "review": review_json,
         }
+
+    # ── Public interface ──────────────────────────────────────────────────────
+
+    @retry(wait=wait_exponential(multiplier=2, min=4, max=60), stop=stop_after_attempt(4))
+    def review(self, pr_record: dict) -> dict:
+        if self._use_ollama:
+            return self._ollama_review(pr_record)
+        return self._openai_review(pr_record)
 
     def review_batch(self, records: list[dict]) -> list[dict]:
         results = []

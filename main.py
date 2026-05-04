@@ -7,8 +7,8 @@ Usage
 -----
   python main.py collect       # fetch PRs from GitHub
   python main.py preprocess    # clean + normalize raw data
-  python main.py ingest        # build RAG vector store from knowledge base
   python main.py baseline      # run zero-retrieval LLM reviews
+  python main.py ingest        # build RAG vector store from knowledge base
   python main.py rag           # run RAG-augmented LLM reviews
   python main.py evaluate      # score both approaches against human reviews
   python main.py all           # run full pipeline end-to-end
@@ -22,6 +22,12 @@ import sys
 from dotenv import load_dotenv
 
 load_dotenv()  # reads .env if present
+
+# Google GenAI SDK and langchain-google-genai both read GOOGLE_API_KEY from env.
+# Alias GEMINI_API_KEY → GOOGLE_API_KEY so callers only need one key in .env.
+_gemini_key = os.environ.get("GEMINI_API_KEY", "")
+if _gemini_key:
+    os.environ.setdefault("GOOGLE_API_KEY", _gemini_key)
 
 from src.utils import load_config, require_env, get_logger
 
@@ -66,7 +72,7 @@ def stage_ingest(config: dict) -> None:
 def stage_baseline(config: dict) -> None:
     from src.baseline.baseline_model import BaselineReviewer
 
-    api_key = require_env("OPENAI_API_KEY")
+    api_key = require_env("GEMINI_API_KEY")
 
     processed_path = config["paths"]["processed_data"]
     if not os.path.exists(processed_path):
@@ -79,7 +85,7 @@ def stage_baseline(config: dict) -> None:
     reviewer = BaselineReviewer(config, api_key=api_key)
     results = reviewer.review_batch(records)
 
-    out_path = "data/processed/baseline_results.json"
+    out_path = config["paths"]["baseline_results"]
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
     with open(out_path, "w") as f:
         json.dump(results, f, indent=2)
@@ -90,7 +96,7 @@ def stage_rag(config: dict) -> None:
     from src.rag.vector_store import load_vector_store
     from src.rag.rag_pipeline import RAGReviewer
 
-    api_key = require_env("OPENAI_API_KEY")
+    api_key = require_env("GEMINI_API_KEY")
 
     processed_path = config["paths"]["processed_data"]
     if not os.path.exists(processed_path):
@@ -114,7 +120,7 @@ def stage_rag(config: dict) -> None:
     reviewer = RAGReviewer(config, vector_store=store, api_key=api_key)
     results = reviewer.review_batch(records)
 
-    out_path = "data/processed/rag_results.json"
+    out_path = config["paths"]["rag_results"]
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
     with open(out_path, "w") as f:
         json.dump(results, f, indent=2)
@@ -125,8 +131,8 @@ def stage_evaluate(config: dict) -> None:
     from src.evaluation.evaluator import Evaluator, save_results
 
     processed_path = config["paths"]["processed_data"]
-    baseline_path = "data/processed/baseline_results.json"
-    rag_path = "data/processed/rag_results.json"
+    baseline_path = config["paths"]["baseline_results"]
+    rag_path = config["paths"]["rag_results"]
 
     with open(processed_path) as f:
         processed_records = json.load(f)
@@ -154,6 +160,24 @@ def stage_evaluate(config: dict) -> None:
             print(f"  {k}: {v}")
 
 
+def stage_vuln_accuracy(config: dict) -> None:
+    from src.evaluation.vulnerabilityaccuracy import run_accuracy_evaluation
+
+    raw_data_dir = os.path.dirname(config["paths"]["raw_data"])  # e.g. data/raw
+    output_report = config["paths"]["vulnerability_accuracy"]
+
+    report = run_accuracy_evaluation(
+        raw_data_dir=raw_data_dir,
+        output_report=output_report,
+    )
+
+    if report:
+        summary = report.get("summary", {})
+        print("\n=== Vulnerability Accuracy Summary ===")
+        for k, v in summary.items():
+            print(f"  {k}: {v}")
+
+
 # ── Main ─────────────────────────────────────────────────────────────────────
 
 STAGES = {
@@ -163,6 +187,7 @@ STAGES = {
     "baseline": stage_baseline,
     "rag": stage_rag,
     "evaluate": stage_evaluate,
+    "vuln_accuracy": stage_vuln_accuracy,
 }
 
 

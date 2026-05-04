@@ -6,7 +6,7 @@ Manages the ChromaDB vector store: building it from documents and querying it.
 
 import os
 from langchain_community.vectorstores import Chroma
-from langchain_community.embeddings import SentenceTransformerEmbeddings
+from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from langchain_core.documents import Document
 
 from src.utils import get_logger
@@ -14,8 +14,9 @@ from src.utils import get_logger
 logger = get_logger(__name__)
 
 
-def _get_embeddings(model_name: str) -> SentenceTransformerEmbeddings:
-    return SentenceTransformerEmbeddings(model_name=model_name)
+def _get_embeddings(model_name: str) -> GoogleGenerativeAIEmbeddings:
+    # Reads GOOGLE_API_KEY from the environment (set via main.py from GEMINI_API_KEY)
+    return GoogleGenerativeAIEmbeddings(model=model_name)
 
 
 def build_vector_store(

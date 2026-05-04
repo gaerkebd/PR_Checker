@@ -18,8 +18,7 @@ from typing import Optional
 
 import numpy as np
 from rouge_score import rouge_scorer
-from sentence_transformers import SentenceTransformer
-from sklearn.metrics.pairwise import cosine_similarity
+from langchain_google_genai import GoogleGenerativeAIEmbeddings
 
 from src.utils import get_logger
 
@@ -29,9 +28,10 @@ _ROUGE = rouge_scorer.RougeScorer(["rougeL"], use_stemmer=True)
 
 
 class Evaluator:
-    def __init__(self, embedding_model: str = "all-MiniLM-L6-v2"):
+    def __init__(self, embedding_model: str = "models/text-embedding-004"):
         logger.info(f"Loading embedding model: {embedding_model}")
-        self.embedder = SentenceTransformer(embedding_model)
+        # Reads GOOGLE_API_KEY from the environment (set via main.py from GEMINI_API_KEY)
+        self.embedder = GoogleGenerativeAIEmbeddings(model=embedding_model)
 
     # ── Semantic similarity ──────────────────────────────────────────────────
 
@@ -39,8 +39,13 @@ class Evaluator:
         """Cosine similarity between two text strings (0–1)."""
         if not generated or not reference:
             return 0.0
-        vecs = self.embedder.encode([generated, reference], normalize_embeddings=True)
-        return float(cosine_similarity([vecs[0]], [vecs[1]])[0][0])
+        vecs = self.embedder.embed_documents([generated, reference])
+        v1 = np.array(vecs[0])
+        v2 = np.array(vecs[1])
+        norm = np.linalg.norm(v1) * np.linalg.norm(v2)
+        if norm == 0:
+            return 0.0
+        return float(np.dot(v1, v2) / norm)
 
     # ── ROUGE-L ──────────────────────────────────────────────────────────────
 
@@ -209,6 +214,6 @@ class Evaluator:
 def save_results(per_pr: list[dict], summary: dict, path: str) -> None:
     os.makedirs(os.path.dirname(path), exist_ok=True)
     output = {"summary": summary, "per_pr": per_pr}
-    with open(path, "w", encoding="utf-8") as f:
+    with open(path, "w") as f:
         json.dump(output, f, indent=2)
     logger.info(f"Evaluation results saved → {path}")

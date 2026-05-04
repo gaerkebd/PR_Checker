@@ -1,38 +1,54 @@
 # ── GitHub Data Collection ──────────────────────────────────────────────────
 github:
-  repo: "ViTAE-Transformer/ViTPose"          # owner/repo to pull PRs from
-  max_prs: 200                     # cap for data collection
-  min_review_comments: 1          # filter: skip PRs with fewer comments
-  state: "open"                 # "open" | "closed" | "all"
+  repo: "openai/openai-agents-python"  # owner/repo to pull PRs from
+  max_prs: 200                       # cap for data collection
+  min_review_comments: 1             # filter: skip PRs with fewer comments
+  state: "closed"                    # "open" | "closed" | "all"
 
+# ── BigVul Dataset (HuggingFace) ─────────────────────────────────────────────
 bigvul:
-  api: ""          # owner/repo to pull PRs from
-  max_prs: 200                     # cap for data collection
-  min_review_comments: 1          # filter: skip PRs with fewer comments
-  state: "open"                 # "open" | "closed" | "all"
+  dataset_id: "bstee615/bigvul"      # HuggingFace dataset repo ID
+  split: "train"                     # "train" | "test" | "validation"
+  max_records: 5000                  # cap on records to load (null = all)
 
 # ── Paths ───────────────────────────────────────────────────────────────────
 paths:
   raw_data: "data/raw/prs_raw.json"
   processed_data: "data/processed/prs_processed.json"
+  baseline_results: "data/processed/baseline_results.json"
+  rag_results: "data/processed/rag_results.json"
   evaluation_results: "data/processed/evaluation_results.json"
+  vulnerability_accuracy: "data/processed/vulnerability_accuracy.json"
   chroma_db: "data/chroma_db"
   knowledge_base: "data/knowledge_base"  # folder for OWASP / coding rule docs
 
 # ── LLM ─────────────────────────────────────────────────────────────────────
 llm:
-  provider: "openai"              # "openai" | "local"
-  model: "gpt-4o-mini"           # cheap & capable for academic project
+  provider: "gemini"
+  model: "gemini-2.0-flash-lite"     # generous free tier: 30 RPM, 1500 RPD
+  base_url: "https://generativelanguage.googleapis.com/v1beta/openai/"
   temperature: 0.2
   max_tokens: 1500
 
+ollama:
+  model: "qwen2.5-coder:1.5b"     # generous free tier: 30 RPM, 1500 RPD
+  base_url: "http://127.0.0.1:11434/api/generate"
+  stream: false
+
+## -d '{
+##  "model": "qwen2.5-coder:1.5b",
+   ##"prompt": "Write a hello world script in Python.",
+   ##"stream": false
+ ##}'
+
+
 # ── Embeddings ───────────────────────────────────────────────────────────────
 embeddings:
-  model: "all-MiniLM-L6-v2"      # fast sentence-transformer model
+  model: "models/gemini-embedding-001" # Google Generative AI embedding model
   chunk_size: 500
   chunk_overlap: 50
 
 # ── RAG ──────────────────────────────────────────────────────────────────────
 rag:
-  top_k: 5                        # number of retrieved chunks per query
+  top_k: 5                           # number of retrieved chunks per query
   collection_name: "security_rules"
