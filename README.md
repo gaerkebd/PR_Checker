@@ -75,8 +75,9 @@ GEMINI_API_KEY=AIza...
 **Free tier limits** (no billing required):
 | Resource | Limit |
 |---|---|
-| `gemini-2.0-flash-lite` | 30 RPM · 1 500 RPD |
-| `text-embedding-004` | 100 RPM · 1 500 RPD |
+| `gemini-3.1-flash-lite-preview` | 15 RPM ·  500 RPD |
+| `gemini-embedding-001` | 100 RPM · 1000 RPD |
+  `github API` | 5000 RPD
 
 ### 5. Configure the target repo
 Edit `config/config.yaml`:
@@ -169,7 +170,7 @@ Pass `--config path/to/other.yaml` to use a non-default config file.
 ```
 
 **Metrics explained:**
-- `semantic_similarity` — cosine similarity between generated review text and human comments (Google `text-embedding-004`)
+- `semantic_similarity` — cosine similarity between generated review text and human comments (Google `text-embedding-001`)
 - `rouge_l` — ROUGE-L F1 n-gram overlap
 - `issue_detection_score` — keyword overlap between generated issues/suggestions and human comments
 - `hallucination_score` — RAG only: fraction of cited rule names that were actually in the retrieved chunks (1.0 = no hallucination)

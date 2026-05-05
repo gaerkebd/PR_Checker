@@ -1,7 +1,8 @@
 # ── GitHub Data Collection ──────────────────────────────────────────────────
 github:
-  repo: "openai/openai-agents-python"  # owner/repo to pull PRs from
-  max_prs: 200                       # cap for data collection
+  repo: "nodejs/node
+  "  # owner/repo to pull PRs from
+  max_prs: 500                       # cap for data collection
   min_review_comments: 1             # filter: skip PRs with fewer comments
   state: "closed"                    # "open" | "closed" | "all"
 
@@ -12,20 +13,25 @@ bigvul:
   max_records: 5000                  # cap on records to load (null = all)
 
 # ── Paths ───────────────────────────────────────────────────────────────────
+# Per-repo paths (raw_data … vulnerability_accuracy) are auto-built at runtime
+# from github.repo (e.g. "pytorch/pytorch" → data/raw/pytorch/pytorch/…).
+# Edit github.repo above — do not edit these file paths directly.
+# chroma_db and knowledge_base are shared across all repos.
 paths:
-  raw_data: "data/raw/prs_raw.json"
-  processed_data: "data/processed/prs_processed.json"
-  baseline_results: "data/processed/baseline_results.json"
-  rag_results: "data/processed/rag_results.json"
-  evaluation_results: "data/processed/evaluation_results.json"
-  vulnerability_accuracy: "data/processed/vulnerability_accuracy.json"
+  raw_data: "data/raw/org/repo/prs_raw.json"
+  processed_data: "data/processed/org/repo/prs_processed.json"
+  bigvul_data: "data/processed/bigvul/bigvul_records.json"
+  baseline_results: "data/processed/org/repo/baseline_results.json"
+  rag_results: "data/processed/org/repo/rag_results.json"
+  evaluation_results: "data/processed/org/repo/evaluation_results.json"
+  vulnerability_accuracy: "data/processed/org/repo/vulnerability_accuracy.json"
   chroma_db: "data/chroma_db"
   knowledge_base: "data/knowledge_base"  # folder for OWASP / coding rule docs
 
 # ── LLM ─────────────────────────────────────────────────────────────────────
 llm:
   provider: "gemini"
-  model: "gemini-2.0-flash-lite"     # generous free tier: 30 RPM, 1500 RPD
+  model: "gemini-3.1-flash-lite-preview"     # generous free tier: 30 RPM, 1500 RPD
   base_url: "https://generativelanguage.googleapis.com/v1beta/openai/"
   temperature: 0.2
   max_tokens: 1500
@@ -44,9 +50,9 @@ ollama:
 
 # ── Embeddings ───────────────────────────────────────────────────────────────
 embeddings:
-  model: "models/gemini-embedding-001" # Google Generative AI embedding model
-  chunk_size: 500
-  chunk_overlap: 50
+  model: "gemini-embedding-001" # Google Generative AI embedding model
+  chunk_size: 1000
+  chunk_overlap: 100
 
 # ── RAG ──────────────────────────────────────────────────────────────────────
 rag:

@@ -18,7 +18,6 @@ from src.utils import load_config, get_logger
 
 logger = get_logger(__name__)
 
-
 def _fetch_diff(diff_url: str, token: str) -> str:
     """Download the raw unified diff for a PR."""
     headers = {
@@ -76,8 +75,10 @@ def collect_prs(config: dict, github_token: str) -> list[dict]:
 
     results = []
     pulls = repo.get_pulls(state=state, sort="updated", direction="desc")
-
+    count = 0
+    
     for pr in pulls:
+
         if len(results) >= max_prs:
             break
 
@@ -99,7 +100,7 @@ def collect_prs(config: dict, github_token: str) -> list[dict]:
             logger.debug(f"PR #{pr.number}: skipped (only {len(review_comments)} review comments)")
             continue
 
-        logger.info(f"Collecting PR #{pr.number}: {pr.title!r}")
+        logger.info(f"{count}/{max_prs} | Collecting PR #{pr.number}: {pr.title!r}")
 
         try:
             diff_text = _fetch_diff(pr.diff_url, github_token)
@@ -141,7 +142,9 @@ def collect_prs(config: dict, github_token: str) -> list[dict]:
                 for r in reviews
             ],
         }
+        count += 1
         results.append(pr_record)
+        
 
     logger.info(f"Collected {len(results)} PRs.")
     return results

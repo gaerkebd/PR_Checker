@@ -7,6 +7,7 @@ Usage
 -----
   python main.py collect       # fetch PRs from GitHub
   python main.py preprocess    # clean + normalize raw data
+  python main.py bigvul        # fetches + normalizes bigvul records
   python main.py baseline      # run zero-retrieval LLM reviews
   python main.py ingest        # build RAG vector store from knowledge base
   python main.py rag           # run RAG-augmented LLM reviews
@@ -34,6 +35,36 @@ from src.utils import load_config, require_env, get_logger
 logger = get_logger("main")
 
 
+# ── Path helpers ─────────────────────────────────────────────────────────────
+
+def _patch_repo_paths(config: dict) -> None:
+    """
+    Overwrite the flat config paths with per-repo sub-directories derived
+    from github.repo (e.g. "pytorch/pytorch").
+
+    Layout:
+        data/raw/<org>/<repo>/prs_raw.json
+        data/processed/<org>/<repo>/prs_processed.json
+        data/processed/<org>/<repo>/baseline_results.json
+        data/processed/<org>/<repo>/rag_results.json
+        data/processed/<org>/<repo>/evaluation_results.json
+        data/processed/<org>/<repo>/vulnerability_accuracy.json
+
+    chroma_db and knowledge_base remain global (shared across repos).
+    """
+    repo = config["github"]["repo"]          # e.g. "pytorch/pytorch"
+    raw_dir  = f"data/raw/{repo}"
+    proc_dir = f"data/processed/{repo}"
+
+    p = config["paths"]
+    p["raw_data"]               = f"{raw_dir}/prs_raw.json"
+    p["processed_data"]         = f"{proc_dir}/prs_processed.json"
+    p["baseline_results"]       = f"{proc_dir}/baseline_results.json"
+    p["rag_results"]            = f"{proc_dir}/rag_results.json"
+    p["evaluation_results"]     = f"{proc_dir}/evaluation_results.json"
+    p["vulnerability_accuracy"] = f"{proc_dir}/vulnerability_accuracy.json"
+
+
 # ── Stage functions ──────────────────────────────────────────────────────────
 
 def stage_collect(config: dict) -> None:
@@ -50,6 +81,17 @@ def stage_preprocess(config: dict) -> None:
     raw = load_raw(config["paths"]["raw_data"])
     processed = preprocess(raw)
     save_processed(processed, config["paths"]["processed_data"])
+
+
+def stage_bigvul(config: dict) -> None:
+    from src.preprocessing.bigvul import load_from_huggingface, save_records
+
+    record_list = load_from_huggingface(
+        dataset_id="bstee615/bigvul",
+        split="train",
+        max_records=config["bigvul"]["max_records"]
+    )
+    save_records(record_list, config["paths"]["bigvul_data"])
 
 
 def stage_ingest(config: dict) -> None:
@@ -70,26 +112,49 @@ def stage_ingest(config: dict) -> None:
 
 
 def stage_baseline(config: dict) -> None:
+    import glob as _glob
     from src.baseline.baseline_model import BaselineReviewer
 
     api_key = require_env("GEMINI_API_KEY")
+    reviewer = BaselineReviewer(config, api_key=api_key)
 
-    processed_path = config["paths"]["processed_data"]
-    if not os.path.exists(processed_path):
-        logger.error(f"Processed data not found at {processed_path}. Run 'preprocess' first.")
+    # Discover every prs_processed.json under data/processed/ and run baseline on each.
+    processed_files = _glob.glob("data/processed/**/prs_processed.json", recursive=True)
+    if not processed_files:
+        logger.error("No prs_processed.json files found under data/processed/. Run 'preprocess' first.")
         sys.exit(1)
 
-    with open(processed_path) as f:
-        records = json.load(f)
+    for processed_path in processed_files:
+        logger.info(f"Running baseline on: {processed_path}")
+        with open(processed_path, encoding="utf-8") as f:
+            records = json.load(f)
 
-    reviewer = BaselineReviewer(config, api_key=api_key)
-    results = reviewer.review_batch(records)
+        results = reviewer.review_batch(records)
 
-    out_path = config["paths"]["baseline_results"]
-    os.makedirs(os.path.dirname(out_path), exist_ok=True)
-    with open(out_path, "w") as f:
-        json.dump(results, f, indent=2)
-    logger.info(f"Baseline results saved → {out_path}")
+        out_path = os.path.join(os.path.dirname(processed_path), "baseline_results.json")
+        with open(out_path, "w", encoding="utf-8") as f:
+            json.dump(results, f, indent=2)
+        logger.info(f"Baseline results saved → {out_path}")
+
+    # ── Original single-repo implementation (config-driven) ───────────────────
+    # api_key = require_env("GEMINI_API_KEY")
+    #
+    # processed_path = config["paths"]["processed_data"]
+    # if not os.path.exists(processed_path):
+    #     logger.error(f"Processed data not found at {processed_path}. Run 'preprocess' first.")
+    #     sys.exit(1)
+    #
+    # with open(processed_path) as f:
+    #     records = json.load(f)
+    #
+    # reviewer = BaselineReviewer(config, api_key=api_key)
+    # results = reviewer.review_batch(records)
+    #
+    # out_path = config["paths"]["baseline_results"]
+    # os.makedirs(os.path.dirname(out_path), exist_ok=True)
+    # with open(out_path, "w") as f:
+    #     json.dump(results, f, indent=2)
+    # logger.info(f"Baseline results saved → {out_path}")
 
 
 def stage_rag(config: dict) -> None:
@@ -163,7 +228,7 @@ def stage_evaluate(config: dict) -> None:
 def stage_vuln_accuracy(config: dict) -> None:
     from src.evaluation.vulnerabilityaccuracy import run_accuracy_evaluation
 
-    raw_data_dir = os.path.dirname(config["paths"]["raw_data"])  # e.g. data/raw
+    raw_data_dir = "data/raw"                              # scan all repos
     output_report = config["paths"]["vulnerability_accuracy"]
 
     report = run_accuracy_evaluation(
@@ -210,6 +275,7 @@ def main() -> None:
     args = parser.parse_args()
 
     config = load_config(args.config)
+    _patch_repo_paths(config)
 
     if args.stage == "all":
         for name, fn in STAGES.items():

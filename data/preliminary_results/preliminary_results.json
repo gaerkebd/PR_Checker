@@ -1,0 +1,215 @@
+{
+  "kb_stats": {
+    "total_chunks": 95,
+    "by_source": {
+      "OWASP Top 10 2021": 10,
+      "Secure Coding Rule": 8,
+      "data\\knowledge_base\\owasp-top-10.txt": 77
+    }
+  },
+  "retrieval_smoke_test": [
+    {
+      "query": "SQL injection in user login query",
+      "top_3": [
+        {
+          "source": "Secure Coding Rule: SQL Safety",
+          "snippet": "Always use parameterized queries or prepared statements. Never concatenate user input into SQL strings. Use an ORM where"
+        },
+        {
+          "source": "Secure Coding Rule: SQL Safety",
+          "snippet": "Always use parameterized queries or prepared statements. Never concatenate user input into SQL strings. Use an ORM where"
+        },
+        {
+          "source": "data\\knowledge_base\\owasp-top-10.txt",
+          "snippet": "\u2022 Use positive server-side input validation.\n\n\u2022 For any residual dynamic queries, escape special characters \n\nusing the"
+        }
+      ]
+    },
+    {
+      "query": "hardcoded API key and password in source code",
+      "top_3": [
+        {
+          "source": "Secure Coding Rule: Secret Management",
+          "snippet": "Never hard-code secrets, API keys, or passwords in source code. Use environment variables or secret managers. Secrets co"
+        },
+        {
+          "source": "Secure Coding Rule: Secret Management",
+          "snippet": "Never hard-code secrets, API keys, or passwords in source code. Use environment variables or secret managers. Secrets co"
+        },
+        {
+          "source": "OWASP Top 10 2021: A05 Security Misconfiguration",
+          "snippet": "90% of apps tested. Includes unnecessary features enabled, default accounts, verbose error messages, missing security ha"
+        }
+      ]
+    },
+    {
+      "query": "path traversal via user-supplied filename",
+      "top_3": [
+        {
+          "source": "Secure Coding Rule: Input Validation",
+          "snippet": "Always validate and sanitize inputs at system boundaries. Use allowlists, not denylists. Reject unexpected characters ea"
+        },
+        {
+          "source": "Secure Coding Rule: Input Validation",
+          "snippet": "Always validate and sanitize inputs at system boundaries. Use allowlists, not denylists. Reject unexpected characters ea"
+        },
+        {
+          "source": "OWASP Top 10 2021: A10 Server-Side Request Forgery (SSRF)",
+          "snippet": "SSRF occurs when a web app fetches a remote resource without validating the user-supplied URL. Prevention: sanitize and"
+        }
+      ]
+    },
+    {
+      "query": "JWT token stored in browser localStorage",
+      "top_3": [
+        {
+          "source": "Secure Coding Rule: Authentication Tokens",
+          "snippet": "Use short-lived JWTs. Validate signature, expiry, issuer, and audience. Store tokens in HttpOnly cookies, not localStora"
+        },
+        {
+          "source": "Secure Coding Rule: Authentication Tokens",
+          "snippet": "Use short-lived JWTs. Validate signature, expiry, issuer, and audience. Store tokens in HttpOnly cookies, not localStora"
+        },
+        {
+          "source": "Secure Coding Rule: Sensitive Data Exposure",
+          "snippet": "Do not log passwords, tokens, PII, or payment info. Mask sensitive fields in logs. Encrypt sensitive data at rest with A"
+        }
+      ]
+    }
+  ],
+  "mini_pilot": [
+    {
+      "pr_id": "pilot_001",
+      "title": "Add user login endpoint",
+      "baseline_scores": {
+        "pr_id": "pilot_001",
+        "approach": "baseline",
+        "model": "qwen2.5-coder:1.5b",
+        "semantic_similarity": 0.874,
+        "rouge_l": 0.1111,
+        "issue_detection_score": 0.1765,
+        "hallucination_score": null,
+        "n_issues_generated": 1,
+        "n_human_comments": 3
+      },
+      "rag_scores": {
+        "pr_id": "pilot_001",
+        "approach": "rag",
+        "model": "qwen2.5-coder:1.5b",
+        "semantic_similarity": 0.8594,
+        "rouge_l": 0.1892,
+        "issue_detection_score": 0.2353,
+        "hallucination_score": 1.0,
+        "n_issues_generated": 1,
+        "n_human_comments": 3
+      },
+      "baseline_review": {
+        "summary": "Add a login endpoint to authenticate users in the application.",
+        "issues": [
+          {
+            "type": "bug",
+            "severity": "low",
+            "location": "src/api.py:5-18",
+            "description": "The query construction does not handle special characters in usernames, leading to SQL injection vulnerabilities."
+          }
+        ],
+        "suggestions": [
+          "Use parameterized queries to prevent SQL injection.",
+          "Implement proper validation for username and password inputs."
+        ]
+      },
+      "rag_review": {
+        "summary": "The PR adds a login endpoint that uses short-lived JWTs and validates them against an API key stored in the environment.",
+        "issues": [
+          {
+            "type": "security",
+            "severity": "medium",
+            "location": "src/auth.py:7-18",
+            "description": "The JWT token is hard-coded and not secure. This should be replaced with a variable that is stored in an environment variable.",
+            "rule_citation": "OWASP Top 10 2021: A07 Identification and Authentication Failures"
+          }
+        ],
+        "suggestions": [
+          "Replace the hardcoded JWT token with a variable stored in an environment variable."
+        ],
+        "retrieved_rules_used": [
+          "OWASP Top 10 2021: A07 Identification and Authentication Failures"
+        ]
+      }
+    },
+    {
+      "pr_id": "pilot_002",
+      "title": "Add file upload and thumbnail generation",
+      "baseline_scores": {
+        "pr_id": "pilot_002",
+        "approach": "baseline",
+        "model": "qwen2.5-coder:1.5b",
+        "semantic_similarity": 0.7738,
+        "rouge_l": 0.1379,
+        "issue_detection_score": 0.1053,
+        "hallucination_score": null,
+        "n_issues_generated": 2,
+        "n_human_comments": 3
+      },
+      "rag_scores": {
+        "pr_id": "pilot_002",
+        "approach": "rag",
+        "model": "qwen2.5-coder:1.5b",
+        "semantic_similarity": 0.8286,
+        "rouge_l": 0.0769,
+        "issue_detection_score": 0.2105,
+        "hallucination_score": 1.0,
+        "n_issues_generated": 2,
+        "n_human_comments": 3
+      },
+      "baseline_review": {
+        "summary": "The PR adds functionality to upload files and generate thumbnails, which is essential for handling user-generated content in a web application.",
+        "issues": [
+          {
+            "type": "bug",
+            "severity": "low",
+            "location": "file:15",
+            "description": "There's no error handling when uploading files. A proper exception should be thrown if the file cannot be saved."
+          },
+          {
+            "type": "style",
+            "severity": "medium",
+            "location": "file:10-20",
+            "description": "The code formatting could be improved, especially the indentation and line lengths. Consider using PEP 8 for consistency."
+          }
+        ],
+        "suggestions": [
+          "Add try-except blocks around file saving to handle exceptions.",
+          "Review the style of the code to ensure it follows PEP 8 guidelines."
+        ]
+      },
+      "rag_review": {
+        "summary": "The pull request adds a file upload and thumbnail generation feature to the application. The code lacks proper security measures for secret management, data integrity, and input validation.",
+        "issues": [
+          {
+            "type": "security",
+            "severity": "high",
+            "location": "app/upload.py:3-4",
+            "description": "The `upload_file` function saves the uploaded file directly without proper sanitization or encryption. This could lead to data theft if the file is not properly secured.",
+            "rule_citation": "N/A"
+          },
+          {
+            "type": "security",
+            "severity": "high",
+            "location": "app/upload.py:7-8",
+            "description": "The code does not check if the generated thumbnail path exists before attempting to save it. This could lead to missing thumbnails.",
+            "rule_citation": "N/A"
+          }
+        ],
+        "suggestions": [
+          "Add environment variables or secret managers for secrets and API keys.",
+          "Validate user-supplied data before saving files and generating thumbnails."
+        ],
+        "retrieved_rules_used": [
+          "Secure Coding Rule: Secret Management",
+          "data\nowledge_base\top-10.txt"
+        ]
+      }
+    }
+  ]
+}

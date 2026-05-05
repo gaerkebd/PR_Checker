@@ -187,50 +187,6 @@ def load_from_huggingface(
     logger.info(f"Loaded {len(records)} BigVul records ({skipped} skipped).")
     return records
 
-
-def load_from_local(path: str) -> list[BigVulRecord]:
-    """
-    Load BigVul records from a local CSV or JSON file.
-
-    Supports:
-      - JSON  (list of dicts, previously saved by save_records)
-      - CSV   (pandas required, raw BigVul CSV download)
-
-    Parameters
-    ----------
-    path : absolute or relative path to the file
-
-    Returns
-    -------
-    list[BigVulRecord]
-    """
-    ext = os.path.splitext(path)[1].lower()
-
-    if ext == ".json":
-        with open(path, "r", encoding="utf-8") as f:
-            raw = json.load(f)
-        # If already in BigVulRecord format, return as-is
-        if raw and "commit_message" in raw[0]:
-            logger.info(f"Loaded {len(raw)} pre-processed BigVul records from {path}")
-            return raw
-        # Otherwise treat as raw rows and transform
-        records = [transform_row(row) for row in raw]
-        logger.info(f"Transformed {len(records)} raw rows from {path}")
-        return records
-
-    if ext == ".csv":
-        try:
-            import pandas as pd  # type: ignore
-        except ImportError as exc:
-            raise ImportError("pandas is required to load CSV files.") from exc
-        df = pd.read_csv(path, low_memory=False)
-        records = [transform_row(row) for row in df.to_dict(orient="records")]
-        logger.info(f"Loaded {len(records)} BigVul records from CSV: {path}")
-        return records
-
-    raise ValueError(f"Unsupported file extension: {ext!r}  (expected .json or .csv)")
-
-
 # ── Persistence ──────────────────────────────────────────────────────────────
 
 def save_records(records: list[BigVulRecord], path: str) -> None:
@@ -239,11 +195,3 @@ def save_records(records: list[BigVulRecord], path: str) -> None:
     with open(path, "w", encoding="utf-8") as f:
         json.dump(records, f, indent=2, ensure_ascii=False)
     logger.info(f"BigVul records saved → {path}  ({len(records)} records)")
-
-
-def load_records(path: str) -> list[BigVulRecord]:
-    """Load previously saved BigVulRecords from disk."""
-    with open(path, "r", encoding="utf-8") as f:
-        data = json.load(f)
-    logger.info(f"Loaded {len(data)} BigVul records from {path}")
-    return data
