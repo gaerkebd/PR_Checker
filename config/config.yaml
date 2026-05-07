@@ -37,9 +37,12 @@ llm:
   max_tokens: 1500
 
 ollama:
-  model: "qwen2.5-coder:1.5b"     # generous free tier: 30 RPM, 1500 RPD
+  model: "qwen2.5-coder:7b"
+  embedding_model: "nomic-embed-text"
   base_url: "http://127.0.0.1:11434/api/generate"
+  embed_url: "http://127.0.0.1:11434"
   stream: false
+  max_diff_chars: 3000
 
 ## -d '{
 ##  "model": "qwen2.5-coder:1.5b",

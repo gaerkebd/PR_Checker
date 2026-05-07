@@ -98,6 +98,9 @@ def stage_ingest(config: dict) -> None:
     from src.rag.document_loader import load_documents
     from src.rag.vector_store import build_vector_store
 
+    ollama_cfg = config.get("ollama")
+    use_local = bool(ollama_cfg and ollama_cfg.get("embedding_model")) and not os.environ.get("GEMINI_API_KEY")
+
     docs = load_documents(
         knowledge_base_dir=config["paths"]["knowledge_base"],
         chunk_size=config["embeddings"]["chunk_size"],
@@ -108,6 +111,7 @@ def stage_ingest(config: dict) -> None:
         persist_dir=config["paths"]["chroma_db"],
         collection_name=config["rag"]["collection_name"],
         embedding_model=config["embeddings"]["model"],
+        ollama_embed_cfg=ollama_cfg if use_local else None,
     )
 
 
@@ -115,7 +119,8 @@ def stage_baseline(config: dict) -> None:
     import glob as _glob
     from src.baseline.baseline_model import BaselineReviewer
 
-    api_key = require_env("GEMINI_API_KEY")
+    use_ollama = bool(config.get("ollama")) and not os.environ.get("GEMINI_API_KEY")
+    api_key = "" if use_ollama else require_env("GEMINI_API_KEY")
     reviewer = BaselineReviewer(config, api_key=api_key)
 
     # Discover every prs_processed.json under data/processed/ and run baseline on each.
@@ -125,15 +130,30 @@ def stage_baseline(config: dict) -> None:
         sys.exit(1)
 
     for processed_path in processed_files:
-        logger.info(f"Running baseline on: {processed_path}")
         with open(processed_path, encoding="utf-8") as f:
             records = json.load(f)
 
-        results = reviewer.review_batch(records)
-
         out_path = os.path.join(os.path.dirname(processed_path), "baseline_results.json")
-        with open(out_path, "w", encoding="utf-8") as f:
-            json.dump(results, f, indent=2)
+
+        # Checkpointing: load already-completed results keyed by pr_id
+        existing: dict = {}
+        if os.path.exists(out_path):
+            with open(out_path, encoding="utf-8") as f:
+                for r in json.load(f):
+                    existing[r["pr_id"]] = r
+
+        pending = [r for r in records if r.get("pr_id") not in existing]
+
+        for record in pending:
+            logger.info(f"Baseline review: PR #{record.get('pr_id')} ({record.get('repo', '')})")
+            result = reviewer.review(record)
+            existing[result["pr_id"]] = result
+            logger.info(f"Baseline [{processed_path}]: {len(existing)} done, {len(pending)} remaining")
+
+            # Incremental save after every PR so crashes lose at most one record
+            with open(out_path, "w", encoding="utf-8") as f:
+                json.dump(list(existing.values()), f, indent=2)
+
         logger.info(f"Baseline results saved → {out_path}")
 
     # ── Original single-repo implementation (config-driven) ───────────────────
@@ -158,38 +178,59 @@ def stage_baseline(config: dict) -> None:
 
 
 def stage_rag(config: dict) -> None:
+    import glob as _glob
     from src.rag.vector_store import load_vector_store
     from src.rag.rag_pipeline import RAGReviewer
 
-    api_key = require_env("GEMINI_API_KEY")
-
-    processed_path = config["paths"]["processed_data"]
-    if not os.path.exists(processed_path):
-        logger.error(f"Processed data not found at {processed_path}. Run 'preprocess' first.")
-        sys.exit(1)
+    use_ollama = bool(config.get("ollama")) and not os.environ.get("GEMINI_API_KEY")
+    api_key = "" if use_ollama else require_env("GEMINI_API_KEY")
+    ollama_cfg = config.get("ollama") if use_ollama else None
 
     chroma_path = config["paths"]["chroma_db"]
     if not os.path.exists(chroma_path):
         logger.error(f"Vector store not found at {chroma_path}. Run 'ingest' first.")
         sys.exit(1)
 
-    with open(processed_path) as f:
-        records = json.load(f)
-
     store = load_vector_store(
         persist_dir=chroma_path,
         collection_name=config["rag"]["collection_name"],
         embedding_model=config["embeddings"]["model"],
+        ollama_embed_cfg=ollama_cfg,
     )
 
     reviewer = RAGReviewer(config, vector_store=store, api_key=api_key)
-    results = reviewer.review_batch(records)
 
-    out_path = config["paths"]["rag_results"]
-    os.makedirs(os.path.dirname(out_path), exist_ok=True)
-    with open(out_path, "w") as f:
-        json.dump(results, f, indent=2)
-    logger.info(f"RAG results saved → {out_path}")
+    # Discover every prs_processed.json under data/processed/ and run RAG on each.
+    processed_files = _glob.glob("data/processed/**/prs_processed.json", recursive=True)
+    if not processed_files:
+        logger.error("No prs_processed.json files found under data/processed/. Run 'preprocess' first.")
+        sys.exit(1)
+
+    for processed_path in processed_files:
+        with open(processed_path, encoding="utf-8") as f:
+            records = json.load(f)
+
+        out_path = os.path.join(os.path.dirname(processed_path), "rag_results.json")
+
+        # Checkpointing: load already-completed results keyed by pr_id
+        existing: dict = {}
+        if os.path.exists(out_path):
+            with open(out_path, encoding="utf-8") as f:
+                for r in json.load(f):
+                    existing[r["pr_id"]] = r
+
+        pending = [r for r in records if r.get("pr_id") not in existing]
+        logger.info(f"RAG [{processed_path}]: {len(existing)} done, {len(pending)} remaining")
+
+        for record in pending:
+            logger.info(f"RAG review: PR #{record.get('pr_id')} ({record.get('repo', '')})")
+            result = reviewer.review(record)
+            existing[result["pr_id"]] = result
+            # Incremental save after every PR so crashes lose at most one record
+            with open(out_path, "w", encoding="utf-8") as f:
+                json.dump(list(existing.values()), f, indent=2)
+
+        logger.info(f"RAG results saved → {out_path}")
 
 
 def stage_evaluate(config: dict) -> None:

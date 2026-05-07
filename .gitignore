@@ -139,7 +139,7 @@ node_modules/*
 # Environments
 .env
 .envrc
-.venv
+.venv312
 env/
 venv/
 ENV/
@@ -209,5 +209,4 @@ marimo/_lsp/
 __marimo__/
 
 # Project-specific
-
-!.env.example
+.env

@@ -85,6 +85,7 @@ class RAGReviewer:
             self.model = ollama_cfg["model"]
             self._ollama_url = ollama_cfg["base_url"]
             self._ollama_stream = ollama_cfg.get("stream", False)
+            self._max_diff_chars = ollama_cfg.get("max_diff_chars", 3000)
             logger.info(f"RAGReviewer using Ollama: {self._ollama_url} model={self.model}")
         else:
             self.model = llm_cfg["model"]
@@ -106,10 +107,11 @@ class RAGReviewer:
     # ── Ollama backend ────────────────────────────────────────────────────────
 
     def _ollama_review(self, pr_record: dict, context: str, sources: list[str]) -> dict:
+        diff = pr_record.get("diff", "")[:self._max_diff_chars]
         user_msg = _USER_TEMPLATE.format(
             title=pr_record.get("title", "Untitled"),
             context=context,
-            diff=pr_record.get("diff", ""),
+            diff=diff,
         )
         prompt = f"{_SYSTEM_PROMPT}\n\n{user_msg}"
 

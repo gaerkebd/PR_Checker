@@ -33,6 +33,7 @@ Respond ONLY with a JSON object matching this schema exactly:
     {
       "type": "<bug|security|style|performance|other>",
       "severity": "<low|medium|high>",
+      "cve": "<number if found>",
       "location": "<file:line or 'unknown'>",
       "description": "<string>"
     }
@@ -67,6 +68,7 @@ class BaselineReviewer:
             self.model = ollama_cfg["model"]
             self._ollama_url = ollama_cfg["base_url"]
             self._ollama_stream = ollama_cfg.get("stream", False)
+            self._max_diff_chars = ollama_cfg.get("max_diff_chars", 3000)
             logger.info(f"BaselineReviewer using Ollama: {self._ollama_url} model={self.model}")
         else:
             self.model = llm_cfg["model"]
@@ -77,9 +79,10 @@ class BaselineReviewer:
     # ── Ollama backend ────────────────────────────────────────────────────────
 
     def _ollama_review(self, pr_record: dict) -> dict:
+        diff = pr_record.get("diff", "")[:self._max_diff_chars]
         user_msg = _USER_TEMPLATE.format(
             title=pr_record.get("title", "Untitled"),
-            diff=pr_record.get("diff", ""),
+            diff=diff,
         )
         # Combine system + user into a single prompt for /api/generate
         prompt = f"{_SYSTEM_PROMPT}\n\n{user_msg}"
