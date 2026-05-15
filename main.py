@@ -124,7 +124,7 @@ def stage_baseline(config: dict) -> None:
     reviewer = BaselineReviewer(config, api_key=api_key)
 
     # Discover every prs_processed.json under data/processed/ and run baseline on each.
-    processed_files = _glob.glob("data/processed/**/prs_processed.json", recursive=True)
+    processed_files = _glob.glob("data/processed/kubernetes/kubernetes/prs_processed.json", recursive=True)
     if not processed_files:
         logger.error("No prs_processed.json files found under data/processed/. Run 'preprocess' first.")
         sys.exit(1)

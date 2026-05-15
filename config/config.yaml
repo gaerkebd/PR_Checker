@@ -1,7 +1,6 @@
 # ── GitHub Data Collection ──────────────────────────────────────────────────
 github:
-  repo: "nodejs/node
-  "  # owner/repo to pull PRs from
+  repo: "facebook/react"  # owner/repo to pull PRs from
   max_prs: 500                       # cap for data collection
   min_review_comments: 1             # filter: skip PRs with fewer comments
   state: "closed"                    # "open" | "closed" | "all"
@@ -43,6 +42,15 @@ ollama:
   embed_url: "http://127.0.0.1:11434"
   stream: false
   max_diff_chars: 3000
+
+# ── DirectML (Windows GPU via DirectX 12) ───────────────────────────────────
+# Requires: pip install torch-directml transformers
+# To activate: ensure this section is present and torch_directml is installed.
+# model must be a HuggingFace model ID — the equivalent of the Ollama model.
+# directml:
+#   model: "Qwen/Qwen2.5-Coder-7B-Instruct"
+#   max_diff_chars: 3000
+#   max_new_tokens: 1500
 
 ## -d '{
 ##  "model": "qwen2.5-coder:1.5b",

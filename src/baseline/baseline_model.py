@@ -4,9 +4,10 @@ baseline_model.py
 Zero-retrieval LLM reviewer.  Takes a PR diff and returns structured JSON
 containing a summary, detected issues, and improvement suggestions.
 
-Supports two backends, selected automatically from config:
-  - Ollama  (config["ollama"] present and api_key omitted)
-  - OpenAI-compatible endpoint  (Gemini, OpenAI, etc.)
+Supports three backends, selected automatically from config (priority order):
+  1. DirectML   (config["directml"] present and torch_directml installed)
+  2. Ollama     (config["ollama"] present and api_key omitted)
+  3. OpenAI-compatible endpoint  (Gemini, OpenAI, etc.)
 """
 
 import json
@@ -15,9 +16,15 @@ import requests
 from openai import OpenAI
 from tenacity import retry, wait_exponential, stop_after_attempt
 
-from src.utils import get_logger, load_config
+from src.utils import get_logger
 
 logger = get_logger(__name__)
+
+try:
+    import torch_directml
+    _DML_AVAILABLE = True
+except ImportError:
+    _DML_AVAILABLE = False
 
 _SYSTEM_PROMPT = """\
 You are an expert code reviewer. When given a pull request diff you must:
@@ -53,28 +60,114 @@ _USER_TEMPLATE = """\
 
 
 class BaselineReviewer:
-    """Wraps either Ollama (/api/generate) or an OpenAI-compatible endpoint."""
+    """Wraps a DirectML, Ollama, or OpenAI-compatible inference backend."""
 
     def __init__(self, config: dict, api_key: str = ""):
         llm_cfg = config["llm"]
         ollama_cfg = config.get("ollama")
+        dml_cfg = config.get("directml")
 
-        # Use Ollama when the config section exists and no API key is supplied
-        self._use_ollama = bool(ollama_cfg) and not api_key
         self.temperature = llm_cfg.get("temperature", 0.2)
         self.max_tokens = llm_cfg.get("max_tokens", 1500)
 
-        if self._use_ollama:
-            self.model = ollama_cfg["model"]
-            self._ollama_url = ollama_cfg["base_url"]
-            self._ollama_stream = ollama_cfg.get("stream", False)
-            self._max_diff_chars = ollama_cfg.get("max_diff_chars", 3000)
-            logger.info(f"BaselineReviewer using Ollama: {self._ollama_url} model={self.model}")
+        # Backend priority: DirectML > Ollama > OpenAI-compat
+        self._use_directml = bool(dml_cfg) and _DML_AVAILABLE
+        self._use_ollama = bool(ollama_cfg) and not api_key and not self._use_directml
+
+        if self._use_directml:
+            assert dml_cfg is not None
+            self._init_directml(dml_cfg)
+        elif self._use_ollama:
+            assert ollama_cfg is not None
+            self._init_ollama(ollama_cfg)
         else:
-            self.model = llm_cfg["model"]
-            base_url = llm_cfg.get("base_url")
-            self.client = OpenAI(api_key=api_key, base_url=base_url)
-            logger.info(f"BaselineReviewer using OpenAI-compat endpoint: model={self.model}")
+            self._init_openai(llm_cfg, api_key)
+
+    # ── Backend initialisation ────────────────────────────────────────────────
+
+    def _init_directml(self, dml_cfg: dict) -> None:
+        import torch
+        from        rmers import AutoTokenizer, AutoModelForCausalLM  # type: ignore[import-untyped]
+
+        model_id = dml_cfg["model"]
+        self.model = model_id
+        self._dml_max_diff_chars = dml_cfg.get("max_diff_chars", 3000)
+        self._dml_max_new_tokens = dml_cfg.get("max_new_tokens", 1500)
+
+        self._dml_device = torch_directml.device()
+        logger.info(f"BaselineReviewer using DirectML device={self._dml_device} model={model_id}")
+
+        self._dml_tokenizer = AutoTokenizer.from_pretrained(model_id)
+        self._dml_model = AutoModelForCausalLM.from_pretrained(  # type: ignore[reportCallIssue]
+            model_id, torch_dtype=torch.float16
+        ).to(self._dml_device)  # type: ignore[reportAttributeAccessIssue]
+
+    def _init_ollama(self, ollama_cfg: dict) -> None:
+        self.model = ollama_cfg["model"]
+        self._ollama_url = ollama_cfg["base_url"]
+        self._ollama_stream = ollama_cfg.get("stream", False)
+        self._max_diff_chars = ollama_cfg.get("max_diff_chars", 3000)
+        logger.info(f"BaselineReviewer using Ollama: {self._ollama_url} model={self.model}")
+
+    def _init_openai(self, llm_cfg: dict, api_key: str) -> None:
+        self.model = llm_cfg["model"]
+        base_url = llm_cfg.get("base_url")
+        self.client = OpenAI(api_key=api_key, base_url=base_url)
+        logger.info(f"BaselineReviewer using OpenAI-compat endpoint: model={self.model}")
+
+    # ── DirectML backend ──────────────────────────────────────────────────────
+
+    def _directml_review(self, pr_record: dict) -> dict:
+        import torch
+        diff = pr_record.get("diff", "")[:self._dml_max_diff_chars]
+        user_msg = _USER_TEMPLATE.format(
+            title=pr_record.get("title", "Untitled"),
+            diff=diff,
+        )
+        messages = [
+            {"role": "system", "content": _SYSTEM_PROMPT},
+            {"role": "user", "content": user_msg},
+        ]
+
+        # Use the model's chat template when available
+        if hasattr(self._dml_tokenizer, "apply_chat_template"):
+            prompt = self._dml_tokenizer.apply_chat_template(
+                messages, tokenize=False, add_generation_prompt=True
+            )
+        else:
+            prompt = f"{_SYSTEM_PROMPT}\n\n{user_msg}"
+
+        inputs = self._dml_tokenizer(prompt, return_tensors="pt").to(self._dml_device)
+
+        do_sample = self.temperature > 0
+        gen_kwargs = dict(
+            max_new_tokens=self._dml_max_new_tokens,
+            do_sample=do_sample,
+            pad_token_id=self._dml_tokenizer.eos_token_id,
+        )
+        if do_sample:
+            gen_kwargs["temperature"] = self.temperature
+
+        with torch.no_grad():
+            output_ids = self._dml_model.generate(**inputs, **gen_kwargs)  # type: ignore[reportAttributeAccessIssue]
+
+        # Decode only the newly generated tokens
+        new_ids = output_ids[0][inputs["input_ids"].shape[1]:]
+        raw = self._dml_tokenizer.decode(new_ids, skip_special_tokens=True).strip()
+
+        try:
+            review_json = json.loads(raw)
+        except json.JSONDecodeError:
+            logger.warning(f"PR {pr_record.get('pr_id')}: DirectML model returned invalid JSON -- storing raw")
+            review_json = {"raw": raw}
+
+        return {
+            "pr_id": pr_record.get("pr_id"),
+            "repo": pr_record.get("repo"),
+            "model": self.model,
+            "approach": "baseline",
+            "review": review_json,
+        }
 
     # ── Ollama backend ────────────────────────────────────────────────────────
 
@@ -84,7 +177,6 @@ class BaselineReviewer:
             title=pr_record.get("title", "Untitled"),
             diff=diff,
         )
-        # Combine system + user into a single prompt for /api/generate
         prompt = f"{_SYSTEM_PROMPT}\n\n{user_msg}"
 
         payload = {
@@ -131,7 +223,7 @@ class BaselineReviewer:
             response_format={"type": "json_object"},
         )
 
-        raw = response.choices[0].message.content
+        raw = response.choices[0].message.content or ""
         try:
             review_json = json.loads(raw)
         except json.JSONDecodeError:
@@ -150,6 +242,8 @@ class BaselineReviewer:
 
     @retry(wait=wait_exponential(multiplier=2, min=4, max=60), stop=stop_after_attempt(4))
     def review(self, pr_record: dict) -> dict:
+        if self._use_directml:
+            return self._directml_review(pr_record)
         if self._use_ollama:
             return self._ollama_review(pr_record)
         return self._openai_review(pr_record)
