@@ -1,14 +1,19 @@
 """
 document_loader.py
 ------------------
-Loads security / coding-rule documents (plain text or markdown files),
-chunks them, and returns LangChain Document objects ready for embedding.
+Loads security documents for the RAG knowledge base:
+  1. OWASP Top 10 and any other .txt / .md files in knowledge_base_dir
+  2. BigVul CVE examples from JSON
 
-Drop files into data/knowledge_base/ and they are picked up automatically.
-Also includes built-in OWASP Top 10 summaries so the system works out of the
-box without requiring external files.
+BigVul records are embedded as-is (one document per record, no re-chunking).
+The semantic anchor is description text; code snippets are truncated so the
+total fits well within nomic-embed-text's effective range (~300-400 tokens).
+
+OWASP and other text files use a section-aware splitter tuned for the
+slide-format paragraph structure of the OWASP document.
 """
 
+import json
 import os
 from pathlib import Path
 
@@ -19,131 +24,136 @@ from src.utils import get_logger
 
 logger = get_logger(__name__)
 
-# ── Built-in OWASP Top 10 (2021) summaries ─────────────────────────────────
-
-_OWASP_DOCS = [
-    ("A01 Broken Access Control",
-     "Broken Access Control moves up from the fifth position; 94% of applications were tested for some form of broken access control. "
-     "Notable CWEs: CWE-200 Exposure of Sensitive Information, CWE-201, CWE-352 CSRF. "
-     "Prevention: deny by default, enforce record ownership, disable directory listing, log failures, rate-limit API."),
-
-    ("A02 Cryptographic Failures",
-     "Formerly 'Sensitive Data Exposure'. Focus on failures related to cryptography that expose sensitive data. "
-     "Prevention: classify data, do not store sensitive data unnecessarily, encrypt at rest and in transit, "
-     "use strong modern algorithms (AES-256, RSA-2048+, TLS 1.2+), never use MD5/SHA1 for passwords."),
-
-    ("A03 Injection",
-     "SQL, NoSQL, OS, LDAP injection. Hostile data is sent to an interpreter as part of a command or query. "
-     "Prevention: use parameterized queries / prepared statements, ORMs, input validation, LIMIT query results."),
-
-    ("A04 Insecure Design",
-     "Focuses on design and architectural flaws. Missing or ineffective control design. "
-     "Prevention: threat modelling, secure design patterns, reference architectures, unit & integration tests for critical flows."),
-
-    ("A05 Security Misconfiguration",
-     "90% of apps tested. Includes unnecessary features enabled, default accounts, verbose error messages, "
-     "missing security hardening, insecure cloud storage. Prevention: repeatable hardening process, minimal platform, "
-     "review cloud storage permissions, segmented architecture, automated config verification."),
-
-    ("A06 Vulnerable and Outdated Components",
-     "Using components with known vulnerabilities. Prevention: remove unused dependencies, monitor CVEs, "
-     "use SCA tools (OWASP Dependency-Check, Snyk), subscribe to security bulletins, patch promptly."),
-
-    ("A07 Identification and Authentication Failures",
-     "Broken authentication. Prevention: MFA, no default credentials, implement brute-force protection, "
-     "use server-side session management, invalidate sessions on logout, weak password checks."),
-
-    ("A08 Software and Data Integrity Failures",
-     "Code and infrastructure that does not protect against integrity violations, insecure deserialization, "
-     "CI/CD pipeline compromise. Prevention: digital signatures, dependency integrity checks, code review of CI/CD, "
-     "do not deserialize from untrusted sources."),
-
-    ("A09 Security Logging and Monitoring Failures",
-     "Insufficient logging allows attackers to stay undetected. Prevention: log authentication, access control, "
-     "input validation failures; ensure logs contain enough context; monitor and alert anomalies; "
-     "use centralized log management (SIEM)."),
-
-    ("A10 Server-Side Request Forgery (SSRF)",
-     "SSRF occurs when a web app fetches a remote resource without validating the user-supplied URL. "
-     "Prevention: sanitize and validate all client-supplied input data, enforce URL schema, port, and destination with allow list, "
-     "disable HTTP redirections, do not send raw responses to clients."),
-]
-
-# ── Secure coding rules ──────────────────────────────────────────────────────
-
-_CODING_RULES = [
-    ("Input Validation",
-     "Always validate and sanitize inputs at system boundaries. Use allowlists, not denylists. "
-     "Reject unexpected characters early. Never trust client-supplied data."),
-
-    ("Secret Management",
-     "Never hard-code secrets, API keys, or passwords in source code. Use environment variables or secret managers. "
-     "Secrets committed to git are considered compromised."),
-
-    ("Error Handling",
-     "Do not expose stack traces or internal details to end users. Log errors server-side with enough context for debugging. "
-     "Use generic error messages for authentication failures."),
-
-    ("SQL Safety",
-     "Always use parameterized queries or prepared statements. Never concatenate user input into SQL strings. "
-     "Use an ORM where possible and treat ORM output as trusted only after schema validation."),
-
-    ("Dependency Safety",
-     "Pin dependency versions. Audit new dependencies before adding them. "
-     "Regularly run dependency vulnerability scans. Remove unused packages."),
-
-    ("Authentication Tokens",
-     "Use short-lived JWTs. Validate signature, expiry, issuer, and audience. "
-     "Store tokens in HttpOnly cookies, not localStorage. Rotate refresh tokens on use."),
-
-    ("Sensitive Data Exposure",
-     "Do not log passwords, tokens, PII, or payment info. Mask sensitive fields in logs. "
-     "Encrypt sensitive data at rest with AES-256 or equivalent."),
-
-    ("Race Conditions and TOCTOU",
-     "Avoid time-of-check to time-of-use bugs. Use atomic operations or database transactions "
-     "to ensure state is consistent between check and use."),
-]
+# Truncation limits for BigVul record fields (chars, not tokens)
+_CODE_TRUNCATE = 350   # per code snippet (vulnerable / fixed)
+_MAX_CVE_DESC  = 500   # CVE description
+_MAX_COMMIT    = 200   # commit message
 
 
-def _make_documents(pairs: list[tuple[str, str]], source_prefix: str) -> list[Document]:
-    return [
-        Document(page_content=content, metadata={"source": f"{source_prefix}: {title}"})
-        for title, content in pairs
-    ]
-
-
-def load_documents(knowledge_base_dir: str, chunk_size: int = 500, chunk_overlap: int = 50) -> list[Document]:
+def _load_bigvul_documents(bigvul_json_path: str) -> list[Document]:
     """
-    Load all documents for the RAG knowledge base.
+    Convert each BigVul record into one LangChain Document.
 
-    1. Built-in OWASP Top 10 + secure coding rules (always included).
-    2. Any .txt or .md files found in `knowledge_base_dir` (optional extras).
+    page_content — semantic text for embedding:
+        [CWE-X] <cwe_description>
+        CVE: <cve_description (truncated)>
+        Fix: <commit_message (truncated)>
+        Vulnerable (<lang>): <func_before (truncated)>
+        Fixed: <func_after (truncated)>
 
-    Returns chunked LangChain Document objects.
+    metadata — stored in ChromaDB for filtering / display:
+        source, cve_id, cwe_id, lang, cve_page, commit
     """
+    if not os.path.exists(bigvul_json_path):
+        logger.warning(f"BigVul JSON not found: {bigvul_json_path}")
+        return []
+
+    with open(bigvul_json_path, encoding="utf-8") as f:
+        records = json.load(f)
+
     docs: list[Document] = []
+    for rec in records:
+        cve_id   = rec.get("cve_id", "")
+        cwe_id   = rec.get("cwe_id", "")
+        lang     = rec.get("lang", "")
+        cve_page = rec.get("cve_page", "")
 
-    # Built-ins
-    docs.extend(_make_documents(_OWASP_DOCS, "OWASP Top 10 2021"))
-    docs.extend(_make_documents(_CODING_RULES, "Secure Coding Rule"))
-    logger.info(f"Loaded {len(docs)} built-in knowledge documents.")
+        cwe_desc    = rec.get("cwe_description", "")
+        cve_desc    = (rec.get("cve_description") or "")[:_MAX_CVE_DESC]
+        commit      = (rec.get("commit_message")  or "")[:_MAX_COMMIT]
+        code_before = (rec.get("func_before")     or "")[:_CODE_TRUNCATE]
+        code_after  = (rec.get("func_after")      or "")[:_CODE_TRUNCATE]
 
-    # User-supplied files
+        parts: list[str] = []
+        if cwe_id and cwe_desc:
+            parts.append(f"[{cwe_id}] {cwe_desc}")
+        elif cwe_id:
+            parts.append(f"[{cwe_id}]")
+        if cve_desc:
+            parts.append(f"{cve_id}: {cve_desc}")
+        if commit:
+            parts.append(f"Fix: {commit}")
+        if code_before:
+            parts.append(f"Vulnerable ({lang}):\n{code_before}")
+        if code_after:
+            parts.append(f"Fixed:\n{code_after}")
+
+        page_content = "\n\n".join(parts)
+
+        docs.append(Document(
+            page_content=page_content,
+            metadata={
+                "source":   f"BigVul:{cve_id}",
+                "cve_id":   cve_id,
+                "cwe_id":   cwe_id,
+                "lang":     lang,
+                "cve_page": cve_page,
+                "commit":   commit,
+            },
+        ))
+
+    logger.info(f"Loaded {len(docs)} BigVul documents from {bigvul_json_path}")
+    return docs
+
+
+def load_documents(
+    knowledge_base_dir: str,
+    chunk_size: int = 450,
+    chunk_overlap: int = 90,
+    bigvul_json_path: str | None = None,
+) -> list[Document]:
+    """
+    Load all RAG knowledge-base documents.
+
+    Text files (OWASP, .txt, .md):
+      Chunked with a section-aware splitter. Separators prioritise the
+      'A0X:2021' OWASP category headers, then blank lines, then newlines.
+      chunk_size=450 keeps each chunk to one focused concept (~110 tokens).
+
+    BigVul records:
+      One document per record, no re-chunking. Each is already ~300-400
+      tokens — within nomic-embed-text's effective embedding range.
+    """
+    text_docs:   list[Document] = []
+    bigvul_docs: list[Document] = []
+
+    # ── Text / OWASP files ─────────────────────────────────────────────────
     kb_path = Path(knowledge_base_dir)
     if kb_path.exists():
-        user_files = list(kb_path.glob("**/*.txt")) + list(kb_path.glob("**/*.md"))
-        for fpath in user_files:
+        text_files = (
+            list(kb_path.glob("**/*.txt")) +
+            list(kb_path.glob("**/*.md"))
+        )
+        for fpath in text_files:
             text = fpath.read_text(encoding="utf-8", errors="ignore")
-            docs.append(Document(page_content=text, metadata={"source": str(fpath)}))
-            logger.info(f"Loaded external doc: {fpath}")
+            text_docs.append(Document(
+                page_content=text,
+                metadata={"source": fpath.name},
+            ))
+            logger.info(f"Loaded text doc: {fpath.name} ({len(text):,} chars)")
+    else:
+        logger.warning(f"knowledge_base_dir not found: {knowledge_base_dir}")
 
-    # Chunk everything
-    splitter = RecursiveCharacterTextSplitter(
+    # Section-aware splitter: respects OWASP A0X category headers before
+    # falling back to blank lines and then individual newlines.
+    text_splitter = RecursiveCharacterTextSplitter(
         chunk_size=chunk_size,
         chunk_overlap=chunk_overlap,
-        separators=["\n\n", "\n", ". ", " "],
+        separators=["\nA0", "\n\n", "\n", ". ", " "],
     )
-    chunked = splitter.split_documents(docs)
-    logger.info(f"Total chunks after splitting: {len(chunked)}")
-    return chunked
+    chunked_text = text_splitter.split_documents(text_docs)
+    logger.info(
+        f"Text docs → {len(chunked_text)} chunks "
+        f"(chunk_size={chunk_size}, overlap={chunk_overlap})"
+    )
+
+    # ── BigVul CVE records ─────────────────────────────────────────────────
+    if bigvul_json_path:
+        bigvul_docs = _load_bigvul_documents(bigvul_json_path)
+
+    all_docs = chunked_text + bigvul_docs
+    logger.info(
+        f"Total documents for embedding: {len(all_docs)} "
+        f"({len(chunked_text)} text chunks + {len(bigvul_docs)} BigVul records)"
+    )
+    return all_docs

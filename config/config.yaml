@@ -1,6 +1,6 @@
 # ── GitHub Data Collection ──────────────────────────────────────────────────
 github:
-  repo: "facebook/react"  # owner/repo to pull PRs from
+  repo: "django/django"  # owner/repo to pull PRs from
   max_prs: 500                       # cap for data collection
   min_review_comments: 1             # filter: skip PRs with fewer comments
   state: "closed"                    # "open" | "closed" | "all"
@@ -27,13 +27,6 @@ paths:
   chroma_db: "data/chroma_db"
   knowledge_base: "data/knowledge_base"  # folder for OWASP / coding rule docs
 
-# ── LLM ─────────────────────────────────────────────────────────────────────
-llm:
-  provider: "gemini"
-  model: "gemini-3.1-flash-lite-preview"     # generous free tier: 30 RPM, 1500 RPD
-  base_url: "https://generativelanguage.googleapis.com/v1beta/openai/"
-  temperature: 0.2
-  max_tokens: 1500
 
 ollama:
   model: "qwen2.5-coder:7b"
@@ -42,6 +35,11 @@ ollama:
   embed_url: "http://127.0.0.1:11434"
   stream: false
   max_diff_chars: 3000
+  temperature: 0.2
+  max_tokens: 1500
+  chunk_size: 450
+  chunk_overlap: 90
+
 
 # ── DirectML (Windows GPU via DirectX 12) ───────────────────────────────────
 # Requires: pip install torch-directml transformers
@@ -59,13 +57,10 @@ ollama:
  ##}'
 
 
-# ── Embeddings ───────────────────────────────────────────────────────────────
-embeddings:
-  model: "gemini-embedding-001" # Google Generative AI embedding model
-  chunk_size: 1000
-  chunk_overlap: 100
 
 # ── RAG ──────────────────────────────────────────────────────────────────────
 rag:
-  top_k: 5                           # number of retrieved chunks per query
+  top_k: 8                           # total retrieved chunks per query
   collection_name: "security_rules"
+  use_mmr: true                      # Maximal Marginal Relevance for diverse retrieval
+  mmr_lambda: 0.6                    # 1.0 = pure relevance, 0.0 = pure diversity

@@ -1,0 +1,259 @@
+[
+  {
+    "pr_id": 18758,
+    "repo": "django/django",
+    "model": "qwen2.5-coder:7b",
+    "approach": "rag",
+    "review": {
+      "summary": "The PR adds JSONSet and JSONRemove functions to the codebase.",
+      "issues": [
+        {
+          "type": "security",
+          "severity": "high",
+          "location": "unknown",
+          "description": "The addition of JSONSet and JSONRemove functions without proper validation or sanitization could lead to security vulnerabilities such as command injection, buffer overflow, or use-after-free.",
+          "rule_citation": "[BigVul:CVE-2018-6196], [BigVul:CVE-2018-14357], [BigVul:CVE-2019-12106]"
+        },
+        {
+          "type": "security",
+          "severity": "medium",
+          "location": "unknown",
+          "description": "The PR does not provide any documentation or comments explaining the behavior of JSONSet and JSONRemove, which could lead to misuse or misunderstanding by other developers.",
+          "rule_citation": "[BigVul:CVE-2013-2885]"
+        },
+        {
+          "type": "style",
+          "severity": "low",
+          "location": "unknown",
+          "description": "The PR does not follow the naming conventions for new functions, which could make it harder to understand and maintain.",
+          "rule_citation": "[BigVul:CVE-2016-7411]"
+        }
+      ],
+      "suggestions": [
+        "Implement proper input validation and sanitization for JSONSet and JSONRemove functions.",
+        "Add documentation or comments explaining the behavior of JSONSet and JSONRemove functions.",
+        "Follow naming conventions for new functions to improve code readability."
+      ],
+      "retrieved_rules_used": [
+        "BigVul:CVE-2013-2885",
+        "BigVul:CVE-2016-7411",
+        "BigVul:CVE-2018-6196",
+        "BigVul:CVE-2018-14357",
+        "BigVul:CVE-2019-12106"
+      ]
+    },
+    "retrieved_sources": [
+      "BigVul:CVE-2013-2885",
+      "BigVul:CVE-2016-1698",
+      "BigVul:CVE-2017-15420",
+      "BigVul:CVE-2018-14879",
+      "BigVul:CVE-2016-7411",
+      "BigVul:CVE-2018-14357",
+      "BigVul:CVE-2018-6196",
+      "BigVul:CVE-2019-12106"
+    ]
+  },
+  {
+    "pr_id": 19514,
+    "repo": "django/django",
+    "model": "qwen2.5-coder:7b",
+    "approach": "rag",
+    "review": {
+      "summary": "The PR adds automated screenshot generation functionality for Django admin pages, including models for articles and newspapers.",
+      "issues": [
+        {
+          "type": "security",
+          "severity": "medium",
+          "location": "admin/docs_image_generation_selenium_tests.py:102",
+          "description": "The test class `AdminDocsImageGenerationSeleniumTests` does not include any security checks or access controls, which could allow unauthorized users to execute the tests and potentially gain insights into the application's internals.",
+          "rule_citation": "owasp-top-10.txt"
+        },
+        {
+          "type": "performance",
+          "severity": "low",
+          "location": "admin/docs_image_generation_selenium_tests.py:102",
+          "description": "The test class `AdminDocsImageGenerationSeleniumTests` does not specify a timeout for the Selenium WebDriver, which could lead to tests hanging indefinitely if an element is not found.",
+          "rule_citation": "N/A"
+        }
+      ],
+      "suggestions": [
+        "Add authentication and authorization checks to ensure only authorized users can run these tests.",
+        "Specify a reasonable timeout for the Selenium WebDriver in the test class."
+      ],
+      "retrieved_rules_used": [
+        "owasp-top-10.txt"
+      ]
+    },
+    "retrieved_sources": [
+      "owasp-top-10.txt",
+      "owasp-top-10.txt",
+      "owasp-top-10.txt",
+      "BigVul:CVE-2017-15420",
+      "owasp-top-10.txt",
+      "BigVul:CVE-2016-7127",
+      "owasp-top-10.txt",
+      "BigVul:CVE-2018-6111"
+    ]
+  },
+  {
+    "pr_id": 21203,
+    "repo": "django/django",
+    "model": "qwen2.5-coder:7b",
+    "approach": "rag",
+    "review": {
+      "summary": "The PR refactors the `RemoteUserMiddleware` to use async methods and improve error handling.",
+      "issues": [
+        {
+          "type": "security",
+          "severity": "medium",
+          "location": "remote_user_middleware.py:210",
+          "description": "The method `aclean_username` is not defined, which will raise an AttributeError when called asynchronously. This could lead to a runtime error.",
+          "rule_citation": "owasp-top-10.txt"
+        },
+        {
+          "type": "style",
+          "severity": "low",
+          "location": "remote_user_middleware.py:228",
+          "description": "The method `clean_username` is not used in the provided diff. It should be either removed or used appropriately.",
+          "rule_citation": "N/A"
+        }
+      ],
+      "suggestions": [
+        "Define the missing `aclean_username` method to handle asynchronous username cleaning.",
+        "Remove the unused `clean_username` method if it's not needed."
+      ],
+      "retrieved_rules_used": [
+        "owasp-top-10.txt"
+      ]
+    },
+    "retrieved_sources": [
+      "owasp-top-10.txt",
+      "owasp-top-10.txt",
+      "BigVul:CVE-2016-5156",
+      "BigVul:CVE-2015-1215",
+      "owasp-top-10.txt",
+      "owasp-top-10.txt",
+      "BigVul:CVE-2017-11171",
+      "owasp-top-10.txt"
+    ]
+  },
+  {
+    "pr_id": 21189,
+    "repo": "django/django",
+    "model": "qwen2.5-coder:7b",
+    "approach": "rag",
+    "review": {
+      "summary": "This PR deprecates the async support in RemoteUserMiddleware and PersistentRemoteUserMiddleware in favor of separate async-only middleware classes.",
+      "issues": [
+        {
+          "type": "security",
+          "severity": "medium",
+          "location": "unknown",
+          "description": "The removal of async support without a clear deprecation period or migration path could lead to unexpected behavior for users who are not aware of the change. This could potentially cause security vulnerabilities if users do not update their code in time.",
+          "rule_citation": "Django Security Best Practices"
+        },
+        {
+          "type": "style",
+          "severity": "low",
+          "location": "unknown",
+          "description": "The use of `warnings.warn` with a category of `RemovedInDjango70Warning` is not necessary since the deprecation period has already ended. The warning should be removed.",
+          "rule_citation": "PEP 8 - Style Guide for Python Code"
+        }
+      ],
+      "suggestions": [
+        "Provide a clear deprecation period and migration path for users who are using async support in RemoteUserMiddleware and PersistentRemoteUserMiddleware.",
+        "Remove the `warnings.warn` statement since the deprecation period has already ended."
+      ],
+      "retrieved_rules_used": [
+        "Django Security Best Practices",
+        "PEP 8 - Style Guide for Python Code"
+      ]
+    },
+    "retrieved_sources": [
+      "BigVul:CVE-2017-5092",
+      "owasp-top-10.txt",
+      "owasp-top-10.txt",
+      "BigVul:CVE-2012-2877",
+      "owasp-top-10.txt",
+      "BigVul:CVE-2013-7294",
+      "BigVul:CVE-2018-19045",
+      "BigVul:CVE-2017-11171"
+    ]
+  },
+  {
+    "pr_id": 21079,
+    "repo": "django/django",
+    "model": "qwen2.5-coder:7b",
+    "approach": "rag",
+    "review": {
+      "summary": "The PR updates the `RemoteUserMiddleware` to handle both WSGI and ASGI request formats by checking if the request is an instance of `ASGIRequest` before accessing `request.META`. It also adds a method `_get_username` to encapsulate this logic.",
+      "issues": [
+        {
+          "type": "security",
+          "severity": "medium",
+          "location": "unknown",
+          "description": "The PR does not include any validation or sanitization of the `header` attribute. If an attacker can control the value of `header`, they could potentially access sensitive headers.",
+          "rule_citation": "owasp-top-10.txt: Injection Prevention"
+        },
+        {
+          "type": "security",
+          "severity": "medium",
+          "location": "unknown",
+          "description": "The PR does not handle cases where the `header` attribute is not set in `request.META`. This could lead to a KeyError if accessed directly.",
+          "rule_citation": "owasp-top-10.txt: Injection Prevention"
+        }
+      ],
+      "suggestions": [
+        "Add input validation for the `header` attribute to ensure it only contains valid header names.",
+        "Handle cases where the `header` attribute is not set in `request.META` by providing a default value or raising an appropriate exception."
+      ],
+      "retrieved_rules_used": [
+        "owasp-top-10.txt"
+      ]
+    },
+    "retrieved_sources": [
+      "BigVul:CVE-2010-1155",
+      "BigVul:CVE-2016-8740",
+      "owasp-top-10.txt",
+      "owasp-top-10.txt",
+      "owasp-top-10.txt",
+      "BigVul:CVE-2011-4326",
+      "owasp-top-10.txt",
+      "BigVul:CVE-2018-14354"
+    ]
+  },
+  {
+    "pr_id": 21198,
+    "repo": "django/django",
+    "model": "qwen2.5-coder:7b",
+    "approach": "rag",
+    "review": {
+      "summary": "The PR allows overriding the PostgreSQL pool's 'check' callable, which can be used to customize connection health checks.",
+      "issues": [
+        {
+          "type": "security",
+          "severity": "medium",
+          "location": "tests/test_psycopg2.py:325-348",
+          "description": "The PR introduces a test that allows overriding the 'check' callable of the PostgreSQL pool. If not properly handled, this could lead to security vulnerabilities such as unauthorized access or denial of service.",
+          "rule_citation": "BigVul:CVE-2016-5350"
+        }
+      ],
+      "suggestions": [
+        "Ensure that any custom 'check' callable provided by users is properly validated and sanitized before being used to check connection health. Consider implementing additional security checks or logging to monitor the use of custom 'check' callables."
+      ],
+      "retrieved_rules_used": [
+        "BigVul:CVE-2016-5350"
+      ]
+    },
+    "retrieved_sources": [
+      "BigVul:CVE-2016-5350",
+      "BigVul:CVE-2016-1503",
+      "BigVul:CVE-2018-19045",
+      "BigVul:CVE-2016-3841",
+      "BigVul:CVE-2018-14879",
+      "BigVul:CVE-2016-3760",
+      "BigVul:CVE-2017-11171",
+      "BigVul:CVE-2013-0909"
+    ]
+  }
+]

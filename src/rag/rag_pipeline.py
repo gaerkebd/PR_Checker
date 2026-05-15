@@ -1,23 +1,18 @@
 """
 rag_pipeline.py
 ---------------
-RAG-augmented PR reviewer.
+RAG-augmented PR reviewer using a local Ollama backend.
 
 At inference time:
-  1. Retrieve relevant security / coding rules from ChromaDB using the diff as
-     the query.
+  1. Strip the diff to added lines and retrieve relevant security documents
+     from ChromaDB using nomic-embed-text embeddings + MMR.
   2. Inject the retrieved context into the prompt.
-  3. Ask the LLM to review the PR with citations to the retrieved rules.
-
-Supports two backends, selected automatically from config:
-  - Ollama  (config["ollama"] present and api_key omitted)
-  - OpenAI-compatible endpoint  (Gemini, OpenAI, etc.)
+  3. Ask qwen2.5-coder to review the PR with citations to retrieved rules.
 """
 
 import json
 import requests
 
-from openai import OpenAI
 from tenacity import retry, wait_exponential, stop_after_attempt
 from langchain_community.vectorstores import Chroma
 
@@ -67,35 +62,52 @@ _USER_TEMPLATE = """\
 """
 
 
+def _diff_to_query(diff: str, max_chars: int = 2000) -> str:
+    """
+    Extract only the added lines from a diff for use as a retrieval query.
+    Raw diffs contain noise (line numbers, deletions, markers) that dilutes
+    the embedding signal. Added lines carry the intent of the change.
+    Falls back to the raw diff if no added lines are found.
+    """
+    added = "\n".join(
+        line[1:] for line in diff.splitlines()
+        if line.startswith("+") and not line.startswith("+++")
+    )
+    query = added if added.strip() else diff
+    return query[:max_chars]
+
+
 class RAGReviewer:
     """PR reviewer that augments the prompt with retrieved security rules."""
 
-    def __init__(self, config: dict, vector_store: Chroma, api_key: str = ""):
-        llm_cfg = config["llm"]
-        ollama_cfg = config.get("ollama")
+    def __init__(self, config: dict, vector_store: Chroma):
+        ollama_cfg = config["ollama"]
+        rag_cfg = config["rag"]
 
-        # Use Ollama when the config section exists and no API key is supplied
-        self._use_ollama = bool(ollama_cfg) and not api_key
-        self.top_k = config["rag"]["top_k"]
+        self.top_k = rag_cfg["top_k"]
+        self.use_mmr = rag_cfg.get("use_mmr", True)
+        self.mmr_lambda = rag_cfg.get("mmr_lambda", 0.6)
         self.store = vector_store
-        self.temperature = llm_cfg.get("temperature", 0.2)
-        self.max_tokens = llm_cfg.get("max_tokens", 1500)
 
-        if self._use_ollama:
-            self.model = ollama_cfg["model"]
-            self._ollama_url = ollama_cfg["base_url"]
-            self._ollama_stream = ollama_cfg.get("stream", False)
-            self._max_diff_chars = ollama_cfg.get("max_diff_chars", 3000)
-            logger.info(f"RAGReviewer using Ollama: {self._ollama_url} model={self.model}")
-        else:
-            self.model = llm_cfg["model"]
-            base_url = llm_cfg.get("base_url")
-            self.client = OpenAI(api_key=api_key, base_url=base_url)
-            logger.info(f"RAGReviewer using OpenAI-compat endpoint: model={self.model}")
+        self.model = ollama_cfg["model"]
+        self._ollama_url = ollama_cfg["base_url"]
+        self._ollama_stream = ollama_cfg.get("stream", False)
+        self._max_diff_chars = ollama_cfg.get("max_diff_chars", 3000)
+        self._temperature = ollama_cfg.get("temperature", 0.2)
+        self._max_tokens = ollama_cfg.get("max_tokens", 1500)
+
+        logger.info(f"RAGReviewer: model={self.model} top_k={self.top_k} mmr={self.use_mmr}")
 
     def _build_context(self, diff: str) -> tuple[str, list[str]]:
         """Retrieve docs and format them as a numbered list."""
-        docs = retrieve(self.store, diff, top_k=self.top_k)
+        query = _diff_to_query(diff)
+        docs = retrieve(
+            self.store,
+            query,
+            top_k=self.top_k,
+            use_mmr=self.use_mmr,
+            mmr_lambda=self.mmr_lambda,
+        )
         lines = []
         sources = []
         for i, doc in enumerate(docs, 1):
@@ -104,14 +116,16 @@ class RAGReviewer:
             sources.append(source)
         return "\n\n".join(lines), sources
 
-    # ── Ollama backend ────────────────────────────────────────────────────────
+    @retry(wait=wait_exponential(multiplier=2, min=4, max=60), stop=stop_after_attempt(4))
+    def review(self, pr_record: dict) -> dict:
+        diff = pr_record.get("diff", "")
+        context, sources = self._build_context(diff)
 
-    def _ollama_review(self, pr_record: dict, context: str, sources: list[str]) -> dict:
-        diff = pr_record.get("diff", "")[:self._max_diff_chars]
+        truncated_diff = diff[:self._max_diff_chars]
         user_msg = _USER_TEMPLATE.format(
             title=pr_record.get("title", "Untitled"),
             context=context,
-            diff=diff,
+            diff=truncated_diff,
         )
         prompt = f"{_SYSTEM_PROMPT}\n\n{user_msg}"
 
@@ -120,6 +134,10 @@ class RAGReviewer:
             "prompt": prompt,
             "stream": self._ollama_stream,
             "format": "json",
+            "options": {
+                "temperature": self._temperature,
+                "num_predict": self._max_tokens,
+            },
         }
 
         resp = requests.post(self._ollama_url, json=payload, timeout=180)
@@ -129,7 +147,7 @@ class RAGReviewer:
         try:
             review_json = json.loads(raw)
         except json.JSONDecodeError:
-            logger.warning(f"PR {pr_record.get('pr_id')}: Ollama returned invalid JSON -- storing raw")
+            logger.warning(f"PR {pr_record.get('pr_id')}: Ollama returned invalid JSON — storing raw")
             review_json = {"raw": raw}
 
         return {
@@ -140,57 +158,3 @@ class RAGReviewer:
             "review": review_json,
             "retrieved_sources": sources,
         }
-
-    # ── OpenAI-compatible backend ─────────────────────────────────────────────
-
-    def _openai_review(self, pr_record: dict, context: str, sources: list[str]) -> dict:
-        user_msg = _USER_TEMPLATE.format(
-            title=pr_record.get("title", "Untitled"),
-            context=context,
-            diff=pr_record.get("diff", ""),
-        )
-
-        response = self.client.chat.completions.create(
-            model=self.model,
-            temperature=self.temperature,
-            max_tokens=self.max_tokens,
-            messages=[
-                {"role": "system", "content": _SYSTEM_PROMPT},
-                {"role": "user", "content": user_msg},
-            ],
-            response_format={"type": "json_object"},
-        )
-
-        raw = response.choices[0].message.content
-        try:
-            review_json = json.loads(raw)
-        except json.JSONDecodeError:
-            logger.warning(f"PR {pr_record.get('pr_id')}: LLM returned invalid JSON")
-            review_json = {"raw": raw}
-
-        return {
-            "pr_id": pr_record.get("pr_id"),
-            "repo": pr_record.get("repo"),
-            "model": self.model,
-            "approach": "rag",
-            "review": review_json,
-            "retrieved_sources": sources,
-        }
-
-    # ── Public interface ──────────────────────────────────────────────────────
-
-    @retry(wait=wait_exponential(multiplier=2, min=4, max=60), stop=stop_after_attempt(4))
-    def review(self, pr_record: dict) -> dict:
-        diff = pr_record.get("diff", "")
-        context, sources = self._build_context(diff)
-
-        if self._use_ollama:
-            return self._ollama_review(pr_record, context, sources)
-        return self._openai_review(pr_record, context, sources)
-
-    def review_batch(self, records: list[dict]) -> list[dict]:
-        results = []
-        for record in records:
-            logger.info(f"RAG review: PR #{record.get('pr_id')}")
-            results.append(self.review(record))
-        return results

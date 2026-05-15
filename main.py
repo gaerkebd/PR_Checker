@@ -84,34 +84,43 @@ def stage_preprocess(config: dict) -> None:
 
 
 def stage_bigvul(config: dict) -> None:
-    from src.preprocessing.bigvul import load_from_huggingface, save_records
+    from src.preprocessing.bigvul import load_from_huggingface, save_records, enrich_records
+
+    bigvul_path = config["paths"]["bigvul_data"]
 
     record_list = load_from_huggingface(
         dataset_id="bstee615/bigvul",
         split="train",
         max_records=config["bigvul"]["max_records"]
     )
-    save_records(record_list, config["paths"]["bigvul_data"])
+    save_records(record_list, bigvul_path)
+
+    # Fetch CVE descriptions from NVD (resumable — safe to interrupt)
+    logger.info("Enriching records with CVE descriptions from NVD …")
+    enrich_records(bigvul_path)
 
 
 def stage_ingest(config: dict) -> None:
     from src.rag.document_loader import load_documents
     from src.rag.vector_store import build_vector_store
 
-    ollama_cfg = config.get("ollama")
-    use_local = bool(ollama_cfg and ollama_cfg.get("embedding_model")) and not os.environ.get("GEMINI_API_KEY")
+
+    bigvul_path = config["paths"].get("bigvul_data")
+    if bigvul_path and not os.path.exists(bigvul_path):
+        logger.warning(f"BigVul data not found at {bigvul_path}. Run 'bigvul' stage first, or ingest will proceed without it.")
+        bigvul_path = None
 
     docs = load_documents(
         knowledge_base_dir=config["paths"]["knowledge_base"],
-        chunk_size=config["embeddings"]["chunk_size"],
-        chunk_overlap=config["embeddings"]["chunk_overlap"],
+        chunk_size=config["ollama"]["chunk_size"],
+        chunk_overlap=config["ollama"]["chunk_overlap"],
+        bigvul_json_path=bigvul_path,
     )
     build_vector_store(
         documents=docs,
         persist_dir=config["paths"]["chroma_db"],
         collection_name=config["rag"]["collection_name"],
-        embedding_model=config["embeddings"]["model"],
-        ollama_embed_cfg=ollama_cfg if use_local else None,
+        ollama_cfg=config["ollama"],
     )
 
 
@@ -119,9 +128,7 @@ def stage_baseline(config: dict) -> None:
     import glob as _glob
     from src.baseline.baseline_model import BaselineReviewer
 
-    use_ollama = bool(config.get("ollama")) and not os.environ.get("GEMINI_API_KEY")
-    api_key = "" if use_ollama else require_env("GEMINI_API_KEY")
-    reviewer = BaselineReviewer(config, api_key=api_key)
+    reviewer = BaselineReviewer(config, api_key="")  # no API key needed for DirectML or Ollama backends"
 
     # Discover every prs_processed.json under data/processed/ and run baseline on each.
     processed_files = _glob.glob("data/processed/kubernetes/kubernetes/prs_processed.json", recursive=True)
@@ -156,25 +163,6 @@ def stage_baseline(config: dict) -> None:
 
         logger.info(f"Baseline results saved → {out_path}")
 
-    # ── Original single-repo implementation (config-driven) ───────────────────
-    # api_key = require_env("GEMINI_API_KEY")
-    #
-    # processed_path = config["paths"]["processed_data"]
-    # if not os.path.exists(processed_path):
-    #     logger.error(f"Processed data not found at {processed_path}. Run 'preprocess' first.")
-    #     sys.exit(1)
-    #
-    # with open(processed_path) as f:
-    #     records = json.load(f)
-    #
-    # reviewer = BaselineReviewer(config, api_key=api_key)
-    # results = reviewer.review_batch(records)
-    #
-    # out_path = config["paths"]["baseline_results"]
-    # os.makedirs(os.path.dirname(out_path), exist_ok=True)
-    # with open(out_path, "w") as f:
-    #     json.dump(results, f, indent=2)
-    # logger.info(f"Baseline results saved → {out_path}")
 
 
 def stage_rag(config: dict) -> None:
@@ -182,9 +170,6 @@ def stage_rag(config: dict) -> None:
     from src.rag.vector_store import load_vector_store
     from src.rag.rag_pipeline import RAGReviewer
 
-    use_ollama = bool(config.get("ollama")) and not os.environ.get("GEMINI_API_KEY")
-    api_key = "" if use_ollama else require_env("GEMINI_API_KEY")
-    ollama_cfg = config.get("ollama") if use_ollama else None
 
     chroma_path = config["paths"]["chroma_db"]
     if not os.path.exists(chroma_path):
@@ -194,11 +179,10 @@ def stage_rag(config: dict) -> None:
     store = load_vector_store(
         persist_dir=chroma_path,
         collection_name=config["rag"]["collection_name"],
-        embedding_model=config["embeddings"]["model"],
-        ollama_embed_cfg=ollama_cfg,
+        ollama_cfg=config["ollama"],
     )
 
-    reviewer = RAGReviewer(config, vector_store=store, api_key=api_key)
+    reviewer = RAGReviewer(config, vector_store=store)
 
     # Discover every prs_processed.json under data/processed/ and run RAG on each.
     processed_files = _glob.glob("data/processed/**/prs_processed.json", recursive=True)
@@ -255,7 +239,7 @@ def stage_evaluate(config: dict) -> None:
         logger.error("No model results found to evaluate. Run 'baseline' and/or 'rag' first.")
         sys.exit(1)
 
-    evaluator = Evaluator(embedding_model=config["embeddings"]["model"])
+    evaluator = Evaluator(embedding_model=config["ollama"]["embedding_model"])
     per_pr, summary = evaluator.evaluate_batch(all_results, processed_records)
     save_results(per_pr, summary, config["paths"]["evaluation_results"])
 
@@ -289,6 +273,7 @@ def stage_vuln_accuracy(config: dict) -> None:
 STAGES = {
     "collect": stage_collect,
     "preprocess": stage_preprocess,
+    "bigvul": stage_bigvul,
     "ingest": stage_ingest,
     "baseline": stage_baseline,
     "rag": stage_rag,
