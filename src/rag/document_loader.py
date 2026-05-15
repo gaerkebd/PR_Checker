@@ -9,6 +9,7 @@ Also includes built-in OWASP Top 10 summaries so the system works out of the
 box without requiring external files.
 """
 
+import json
 import os
 from pathlib import Path
 
@@ -113,7 +114,57 @@ def _make_documents(pairs: list[tuple[str, str]], source_prefix: str) -> list[Do
     ]
 
 
-def load_documents(knowledge_base_dir: str, chunk_size: int = 500, chunk_overlap: int = 50) -> list[Document]:
+def _load_bigvul_documents(bigvul_json_path: str) -> list[Document]:
+    """
+    Read BigVul records from JSON and convert each into a LangChain Document.
+    Returns an empty list if the file does not exist.
+    """
+    if not os.path.exists(bigvul_json_path):
+        return []
+
+    with open(bigvul_json_path, encoding="utf-8") as f:
+        records = json.load(f)
+
+    docs: list[Document] = []
+    for rec in records:
+        # Build description block from available fields
+        header = f"Security Vulnerability Example: {rec.get('cve_id', '')} ({rec.get('cwe_id', '')})"
+
+        parts = [header]
+
+        cwe_desc = rec.get("cwe_description", "")
+        if cwe_desc:
+            parts.append(f"Vulnerability Type: {cwe_desc}")
+
+        cve_desc = rec.get("cve_description", "")
+        if cve_desc:
+            parts.append(f"Description: {cve_desc}")
+
+        parts.append(f"Commit: {rec.get('commit_message', '')}")
+
+        func_before = rec.get("func_before", "")[:500]
+        func_after = rec.get("func_after", "")[:500]
+        lang = rec.get("lang", "")
+        if func_before:
+            parts.append(f"Vulnerable code ({lang}):\n{func_before}")
+        if func_after:
+            parts.append(f"Fixed code:\n{func_after}")
+
+        content = "\n\n".join(parts)
+
+        docs.append(Document(
+            page_content=content,
+            metadata={
+                "source": f"BigVul: {rec.get('cve_id', '')} ({rec.get('cwe_id', '')})",
+                "cve_id": rec.get("cve_id", ""),
+                "cwe_id": rec.get("cwe_id", ""),
+            },
+        ))
+    return docs
+
+
+def load_documents(knowledge_base_dir: str, chunk_size: int = 500, chunk_overlap: int = 50,
+                   bigvul_json_path: str | None = None) -> list[Document]:
     """
     Load all documents for the RAG knowledge base.
 
@@ -137,6 +188,12 @@ def load_documents(knowledge_base_dir: str, chunk_size: int = 500, chunk_overlap
             text = fpath.read_text(encoding="utf-8", errors="ignore")
             docs.append(Document(page_content=text, metadata={"source": str(fpath)}))
             logger.info(f"Loaded external doc: {fpath}")
+
+    # BigVul CVE examples
+    if bigvul_json_path:
+        bigvul_docs = _load_bigvul_documents(bigvul_json_path)
+        docs.extend(bigvul_docs)
+        logger.info(f"Loaded {len(bigvul_docs)} BigVul CVE documents.")
 
     # Chunk everything
     splitter = RecursiveCharacterTextSplitter(

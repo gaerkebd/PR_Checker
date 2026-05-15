@@ -84,14 +84,20 @@ def stage_preprocess(config: dict) -> None:
 
 
 def stage_bigvul(config: dict) -> None:
-    from src.preprocessing.bigvul import load_from_huggingface, save_records
+    from src.preprocessing.bigvul import load_from_huggingface, save_records, enrich_records
+
+    bigvul_path = config["paths"]["bigvul_data"]
 
     record_list = load_from_huggingface(
         dataset_id="bstee615/bigvul",
         split="train",
         max_records=config["bigvul"]["max_records"]
     )
-    save_records(record_list, config["paths"]["bigvul_data"])
+    save_records(record_list, bigvul_path)
+
+    # Fetch CVE descriptions from NVD (resumable — safe to interrupt)
+    logger.info("Enriching records with CVE descriptions from NVD …")
+    enrich_records(bigvul_path)
 
 
 def stage_ingest(config: dict) -> None:
@@ -101,10 +107,16 @@ def stage_ingest(config: dict) -> None:
     ollama_cfg = config.get("ollama")
     use_local = bool(ollama_cfg and ollama_cfg.get("embedding_model")) and not os.environ.get("GEMINI_API_KEY")
 
+    bigvul_path = config["paths"].get("bigvul_data")
+    if bigvul_path and not os.path.exists(bigvul_path):
+        logger.warning(f"BigVul data not found at {bigvul_path}. Run 'bigvul' stage first, or ingest will proceed without it.")
+        bigvul_path = None
+
     docs = load_documents(
         knowledge_base_dir=config["paths"]["knowledge_base"],
         chunk_size=config["embeddings"]["chunk_size"],
         chunk_overlap=config["embeddings"]["chunk_overlap"],
+        bigvul_json_path=bigvul_path,
     )
     build_vector_store(
         documents=docs,
@@ -289,6 +301,7 @@ def stage_vuln_accuracy(config: dict) -> None:
 STAGES = {
     "collect": stage_collect,
     "preprocess": stage_preprocess,
+    "bigvul": stage_bigvul,
     "ingest": stage_ingest,
     "baseline": stage_baseline,
     "rag": stage_rag,
