@@ -210,3 +210,7 @@ __marimo__/
 
 # Project-specific
 .env
+
+# Large datasets
+src/preprocessing/data/raw/bigvul/bigvul_dataset.jsonl
+*.jsonl
