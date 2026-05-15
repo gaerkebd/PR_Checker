@@ -213,6 +213,8 @@ def stage_rag(config: dict) -> None:
             # Incremental save after every PR so crashes lose at most one record
             with open(out_path, "w", encoding="utf-8") as f:
                 json.dump(list(existing.values()), f, indent=2)
+            logger.info(f"RAG [{processed_path}]: {len(existing)} done, {len(pending)} remaining")
+
 
         logger.info(f"RAG results saved → {out_path}")
 
