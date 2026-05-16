@@ -18,7 +18,7 @@ from typing import Optional
 
 import numpy as np
 from rouge_score import rouge_scorer
-from langchain_google_genai import GoogleGenerativeAIEmbeddings
+from langchain_community.embeddings import OllamaEmbeddings
 
 from src.utils import get_logger
 
@@ -28,17 +28,25 @@ _ROUGE = rouge_scorer.RougeScorer(["rougeL"], use_stemmer=True)
 
 
 class Evaluator:
-    def __init__(self, embedding_model: str = "models/text-embedding-004"):
-        logger.info(f"Loading embedding model: {embedding_model}")
-        # Reads GOOGLE_API_KEY from the environment (set via main.py from GEMINI_API_KEY)
-        self.embedder = GoogleGenerativeAIEmbeddings(model=embedding_model)
+    def __init__(
+        self,
+        embedding_model: str = "nomic-embed-text",
+        embed_url: str = "http://127.0.0.1:11434",
+    ):
+        self.embedder = OllamaEmbeddings(base_url=embed_url, model=embedding_model)
+        logger.info(f"Using Ollama embedding model: {embedding_model} @ {embed_url}")
 
     # ── Semantic similarity ──────────────────────────────────────────────────
+
+    # nomic-embed-text context window is 8192 tokens (~6 chars/token conservatively)
+    _EMBED_MAX_CHARS = 4096
 
     def semantic_similarity(self, generated: str, reference: str) -> float:
         """Cosine similarity between two text strings (0–1)."""
         if not generated or not reference:
             return 0.0
+        generated = generated[: self._EMBED_MAX_CHARS]
+        reference = reference[: self._EMBED_MAX_CHARS]
         vecs = self.embedder.embed_documents([generated, reference])
         v1 = np.array(vecs[0])
         v2 = np.array(vecs[1])
@@ -95,7 +103,7 @@ class Evaluator:
         Returns None for baseline (no retrieved sources).
         """
         if not retrieved_sources:
-            return None  # not applicable for baseline
+            return -1.0  # not applicable for baseline
 
         citations = [
             i.get("rule_citation", "N/A")

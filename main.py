@@ -185,7 +185,7 @@ def stage_rag(config: dict) -> None:
     reviewer = RAGReviewer(config, vector_store=store)
 
     # Discover every prs_processed.json under data/processed/ and run RAG on each.
-    processed_files = _glob.glob("data/processed/**/prs_processed.json", recursive=True)
+    processed_files = _glob.glob("data/processed/openai-agents/prs_processed.json", recursive=True)
     if not processed_files:
         logger.error("No prs_processed.json files found under data/processed/. Run 'preprocess' first.")
         sys.exit(1)
@@ -220,36 +220,80 @@ def stage_rag(config: dict) -> None:
 
 
 def stage_evaluate(config: dict) -> None:
+    import glob as _glob
+    import numpy as np
     from src.evaluation.evaluator import Evaluator, save_results
 
-    processed_path = config["paths"]["processed_data"]
-    baseline_path = config["paths"]["baseline_results"]
-    rag_path = config["paths"]["rag_results"]
-
-    with open(processed_path) as f:
-        processed_records = json.load(f)
-
-    all_results = []
-    for path in [baseline_path, rag_path]:
-        if os.path.exists(path):
-            with open(path) as f:
-                all_results.extend(json.load(f))
-        else:
-            logger.warning(f"{path} not found — skipping.")
-
-    if not all_results:
-        logger.error("No model results found to evaluate. Run 'baseline' and/or 'rag' first.")
+    # Auto-discover all repos that have rag_results.json under data/processed/
+    rag_files = sorted(_glob.glob("data/processed/**/rag_results.json", recursive=True))
+    if not rag_files:
+        logger.error("No rag_results.json found under data/processed/. Run 'rag' stage first.")
         sys.exit(1)
 
-    evaluator = Evaluator(embedding_model=config["ollama"]["embedding_model"])
-    per_pr, summary = evaluator.evaluate_batch(all_results, processed_records)
-    save_results(per_pr, summary, config["paths"]["evaluation_results"])
+    evaluator = Evaluator(
+        embedding_model=config["ollama"]["embedding_model"],
+        embed_url=config["ollama"]["embed_url"],
+    )
 
-    print("\n=== Evaluation Summary ===")
-    for approach, metrics in summary.items():
-        print(f"\n[{approach}]")
-        for k, v in metrics.items():
-            print(f"  {k}: {v}")
+    all_per_pr: list[dict] = []
+    all_summaries: dict[str, dict[str, list]] = {}
+
+    for rag_path in rag_files:
+        proc_dir = os.path.dirname(rag_path)
+        processed_path = os.path.join(proc_dir, "prs_processed.json")
+        baseline_path  = os.path.join(proc_dir, "baseline_results.json")
+        eval_path      = os.path.join(proc_dir, "evaluation_results.json")
+
+        if not os.path.exists(processed_path):
+            logger.warning(f"No prs_processed.json alongside {rag_path} — skipping.")
+            continue
+
+        with open(processed_path, encoding="utf-8") as f:
+            processed_records = json.load(f)
+
+        with open(rag_path, encoding="utf-8") as f:
+            rag_records = json.load(f)
+
+        results = list(rag_records)
+        rag_pr_ids = {r["pr_id"] for r in rag_records}
+
+        # Include baseline only for PRs that were also RAG-reviewed (fair comparison)
+        if os.path.exists(baseline_path):
+            with open(baseline_path, encoding="utf-8") as f:
+                baseline_records = json.load(f)
+            baseline_filtered = [r for r in baseline_records if r["pr_id"] in rag_pr_ids]
+            results.extend(baseline_filtered)
+            logger.info(
+                f"[{proc_dir}] {len(rag_records)} RAG + {len(baseline_filtered)} "
+                f"matched baseline results ({len(rag_pr_ids)} unique PRs)"
+            )
+        else:
+            logger.info(f"[{proc_dir}] {len(rag_records)} RAG results (no baseline found)")
+
+        per_pr, summary = evaluator.evaluate_batch(results, processed_records)
+        save_results(per_pr, summary, eval_path)
+        all_per_pr.extend(per_pr)
+
+        for approach, metrics in summary.items():
+            if approach not in all_summaries:
+                all_summaries[approach] = {k: [] for k in metrics}
+            for k, v in metrics.items():
+                if v is not None:
+                    all_summaries[approach][k].append(v)
+
+        print(f"\n=== Evaluation Summary [{proc_dir}] ===")
+        for approach, metrics in summary.items():
+            print(f"\n[{approach}]")
+            for k, v in metrics.items():
+                print(f"  {k}: {v}")
+
+    if all_summaries:
+        print("\n=== Overall Evaluation Summary (all repos) ===")
+        for approach, metrics in all_summaries.items():
+            print(f"\n[{approach}]")
+            for k, v_list in metrics.items():
+                avg = round(float(np.mean(v_list)), 4) if v_list else None
+                print(f"  {k}: {avg}")
 
 
 def stage_vuln_accuracy(config: dict) -> None:
